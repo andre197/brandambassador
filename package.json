@@ -1,0 +1,41 @@
+{
+  "name": "brandambassador",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20.12"
+  },
+  "scripts": {
+    "build": "npm run build -w @ba/shared && npm run build -w @ba/api && npm run build -w @ba/web && node scripts/prepare-web.mjs",
+    "start:api": "node apps/api/dist/src/server.js",
+    "start:worker": "node apps/api/dist/src/worker.js",
+    "start:web": "node scripts/start-web.mjs",
+    "migrate:prod": "node apps/api/dist/src/cli/migrate.js",
+    "create-admin:prod": "node apps/api/dist/src/cli/create-admin.js",
+    "jobs:prod": "node apps/api/dist/src/cli/run-jobs.js",
+    "build:shared": "npm run build -w @ba/shared",
+    "typecheck": "npm run build:shared && npm run typecheck --workspaces --if-present",
+    "test": "npm run build:shared && npm run test --workspaces --if-present",
+    "db:up": "docker compose -f docker-compose.dev.yml up -d",
+    "db:down": "docker compose -f docker-compose.dev.yml down",
+    "migrate": "npm run migrate -w @ba/api --",
+    "seed:demo": "npm run seed-demo -w @ba/api --",
+    "create-admin": "npm run create-admin -w @ba/api --",
+    "gmail-token": "npm run gmail-token -w @ba/api --",
+    "dev:api": "npm run dev -w @ba/api",
+    "dev:worker": "npm run dev:worker -w @ba/api",
+    "dev:web": "npm run dev -w @ba/web"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "typescript": "~5.9.3",
+    "vitest": "^3.2.7"
+  },
+  "overrides": {
+    "cookie": "^1.1.1"
+  }
+}

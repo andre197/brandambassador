@@ -1,0 +1,15 @@
+node_modules/
+.next/
+dist/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+uploads/
+.DS_Store
+*.tsbuildinfo
+next-env.d.ts
+# Signed contracts and templates stay local (company data); the rules are summarised in docs/CONTRACT-RULES.md.
+contracts/
+*.docx
