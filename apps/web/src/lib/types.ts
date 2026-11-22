@@ -1,4 +1,4 @@
-import type { CommissionStatus, OrderCalc, OrderStatus, PaymentStatus, RequestStatus, Role } from '@ba/shared';
+import type { CommissionStatus, CommissionType, OrderCalc, OrderStatus, PaymentStatus, RequestStatus, Role } from '@ba/shared';
 
 export interface Me {
   id: string;
@@ -23,10 +23,14 @@ export interface OrderListRow {
   status: OrderStatus;
   order_date: string;
   merchant_ref: string | null;
-  invoice_number: string | null;
+  merchant_eik?: string;
+  /** The aliases of the shops in this order, comma separated; null without shops. */
+  shop_aliases?: string | null;
   planned_delivery_on: string | null;
   delivered_on: string | null;
+  commission_type?: CommissionType;
   commission_bp?: number;
+  commission_unit_cents?: number;
   calc: Calc;
 }
 
@@ -39,7 +43,15 @@ export interface OrderItem {
   unit: string;
   quantity_milli: number;
   unit_price_cents: number;
+  unit_price_gross_cents: number;
+  line_net_cents: number;
+  line_gross_cents: number;
   vat_bp: number;
+  /** Not sent to merchants. */
+  commission_unit_cents?: number | null;
+  shop_id: string | null;
+  shop_alias: string | null;
+  shop_address: string | null;
   good_available: boolean | null;
 }
 
@@ -69,9 +81,9 @@ export interface PriceRequest {
   good_name_en?: string | null;
   unit?: string;
   producer_id?: string;
-  merchant_id?: string;
+  merchant_id?: string | null;
   producer_name?: string;
-  merchant_name?: string;
+  merchant_name?: string | null;
   order_id?: string | null;
   order_number?: number | null;
   status: RequestStatus;
@@ -92,10 +104,6 @@ export interface OrderDetail extends OrderListRow {
   created_by_role: Role;
   delivery_method: string;
   delivery_note: string | null;
-  invoice_date: string | null;
-  invoice_method: string;
-  invoice_note: string | null;
-  invoice_receive_method: string;
   returned_net_cents: number;
   returned_note: string | null;
   cancel_reason: string | null;
@@ -105,8 +113,8 @@ export interface OrderDetail extends OrderListRow {
   commission_payments?: Payment[];
   events: OrderEvent[];
   requests: PriceRequest[];
-  producer: { id: string; name: string; eik: string; phone: string; email: string; address: string; contact_person: string | null };
-  merchant: { id: string; name: string; eik: string; phone: string; email: string; address: string; contact_person: string | null; invoice_email: string | null; delivery_note: string | null };
+  producer: { id: string; name: string; eik: string; phone: string; email: string | null; address: string; contact_person: string | null };
+  merchant: { id: string; name: string; eik: string; phone: string; email: string | null; address: string; contact_person: string | null; invoice_email: string | null; delivery_note: string | null };
 }
 
 export interface Good {
@@ -118,10 +126,19 @@ export interface Good {
   sku: string | null;
   unit: string;
   price_cents: number;
+  price_gross_cents: number;
   vat_bp: number;
   description: string | null;
   active: boolean;
+  updated_at?: string;
+  /** The good's own fixed commission per unit; not sent to merchants. */
+  commission_unit_cents?: number | null;
   my_price_cents?: number;
+  /** The good has an agreed price or is in an order: only the admin changes its price. */
+  price_linked?: boolean;
+  /** A pending request of the producer for a new price of the good. */
+  pending_price_cents?: number | null;
+  my_price_gross_cents?: number;
   price_locked?: boolean;
   merchants_count?: number;
   sold_milli?: number;
@@ -133,7 +150,9 @@ export interface AgreedPrice {
   merchant_id: string;
   producer_id: string;
   price_cents: number;
+  price_gross_cents: number;
   list_price_cents: number;
+  list_price_gross_cents: number;
   vat_bp: number;
   name_bg: string;
   name_en: string | null;
@@ -158,7 +177,7 @@ export interface Producer {
   name: string;
   eik: string;
   phone: string;
-  email: string;
+  email: string | null;
   address: string;
   contact_person: string | null;
   active: boolean;
@@ -168,7 +187,9 @@ export interface Producer {
   invoice_note: string | null;
   default_vat_bp: number;
   notes?: string | null;
+  commission_type?: CommissionType;
   commission_bp?: number;
+  commission_unit_cents?: number;
   contract_number?: string | null;
   contract_signed_on?: string | null;
   contract?: { end: string; notice: string } | null;
@@ -185,7 +206,7 @@ export interface Merchant {
   name: string;
   eik: string;
   phone: string;
-  email: string;
+  email: string | null;
   address: string;
   contact_person: string | null;
   active: boolean;
@@ -209,9 +230,6 @@ export interface Pair {
   merchant_eik: string;
   merchant_address: string;
   status: 'attracted' | 'pre_existing' | 'released';
-  commission_bp: number | null;
-  producer_commission_bp: number;
-  effective_commission_bp: number;
   introduced_on: string | null;
   introduced_how: string | null;
   territory: string | null;
@@ -262,3 +280,33 @@ export interface NotificationRow {
 }
 
 export type { CommissionStatus, OrderStatus, PaymentStatus, RequestStatus, Role };
+
+/** One shop of a merchant. */
+export interface Shop {
+  id: string;
+  merchant_id: string;
+  alias: string;
+  address: string;
+  active: boolean;
+  orders?: number;
+}
+
+/** The extended orders view: one row for each good of an order. */
+export interface OrderLine {
+  id: string;
+  order_id: string;
+  number: number;
+  order_date: string;
+  status: OrderStatus;
+  producer_name: string;
+  merchant_eik: string;
+  merchant_name: string;
+  shop_alias: string | null;
+  address: string;
+  name_bg: string;
+  name_en: string | null;
+  quantity_milli: number;
+  unit: string;
+  line_net_cents: number;
+  line_gross_cents: number;
+}

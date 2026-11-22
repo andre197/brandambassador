@@ -9,13 +9,14 @@ import { AgreedPrices } from '@/components/goods/agreed-prices';
 import { Badge, Btn, Card, ConfirmBtn, Empty, ErrorNote, Facts, Loaded, PageHeader, Table, Tabs, td, tdNum, useAction, useData, useFmt } from '@/components/kit';
 import { OrderTable } from '@/components/orders/order-table';
 import { MerchantForm } from '@/components/parties/party-form';
+import { ShopsCard } from '@/components/parties/shops-card';
 import { UsersCard } from '@/components/parties/users-card';
 import { RemindersPanel } from '@/components/reminders/reminders-panel';
 import { useMe } from '@/components/session';
 import { api } from '@/lib/api-client';
 import type { Merchant, OrderListRow, Pair } from '@/lib/types';
 
-type Tab = 'details' | 'producers' | 'prices' | 'reminders' | 'orders' | 'users';
+type Tab = 'details' | 'shops' | 'producers' | 'prices' | 'reminders' | 'orders' | 'users';
 
 function ProducersOfMerchant({ merchantId }: { merchantId: string }) {
   const t = useTranslations('pairs');
@@ -27,7 +28,7 @@ function ProducersOfMerchant({ merchantId }: { merchantId: string }) {
       <Loaded state={state}>
         {(rows) =>
           rows.length ? (
-            <Table head={[t('producer'), t('status'), t('commission'), t('orders'), t('total'), t('lastOrder'), t('active')]}>
+            <Table head={[t('producer'), t('status'), t('orders'), t('total'), t('lastOrder'), t('active')]}>
               {rows.map((p) => (
                 <tr key={p.id}>
                   <td className={td}>
@@ -38,7 +39,6 @@ function ProducersOfMerchant({ merchantId }: { merchantId: string }) {
                   <td className={td}>
                     <Badge tone={p.status === 'attracted' ? 'blue' : 'gray'}>{tp(p.status)}</Badge>
                   </td>
-                  <td className={tdNum}>{f.pct(p.effective_commission_bp)}</td>
                   <td className={tdNum}>{p.orders}</td>
                   <td className={tdNum}>{f.money(p.total_net_cents)}</td>
                   <td className={`${td} whitespace-nowrap`}>{f.date(p.last_order_on)}</td>
@@ -94,8 +94,9 @@ function AdminMerchant({ m, reload }: { m: Merchant; reload(): void }) {
           <ErrorNote>{remove.error}</ErrorNote>
         </div>
       ) : null}
-      <Tabs value={tab} onChange={(v) => setTab(v as Tab)} options={(['details', 'producers', 'prices', 'reminders', 'orders', 'users'] as Tab[]).map((v) => ({ value: v, label: t(`tabs.${v}`) }))} />
+      <Tabs value={tab} onChange={(v) => setTab(v as Tab)} options={(['details', 'shops', 'producers', 'prices', 'reminders', 'orders', 'users'] as Tab[]).map((v) => ({ value: v, label: t(`tabs.${v}`) }))} />
       {tab === 'details' ? <MerchantForm initial={m} onSaved={reload} /> : null}
+      {tab === 'shops' ? <ShopsCard merchantId={m.id} /> : null}
       {tab === 'producers' ? <ProducersOfMerchant merchantId={m.id} /> : null}
       {tab === 'prices' ? <AgreedPrices merchantId={m.id} /> : null}
       {tab === 'reminders' ? <RemindersPanel merchantId={m.id} /> : null}
@@ -125,6 +126,7 @@ function ProducerView({ m }: { m: Merchant }) {
       </PageHeader>
       <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
         <div className="min-w-0 space-y-6">
+          <ShopsCard merchantId={m.id} />
           <AgreedPrices producerId={me.producer_id!} merchantId={m.id} />
           <Card title={t('ordersTitle')}>
             <Loaded state={orders}>{(rows) => <OrderTable rows={rows} compact />}</Loaded>

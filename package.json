@@ -28,7 +28,8 @@
     "gmail-token": "npm run gmail-token -w @ba/api --",
     "dev:api": "npm run dev -w @ba/api",
     "dev:worker": "npm run dev:worker -w @ba/api",
-    "dev:web": "npm run dev -w @ba/web"
+    "dev:web": "npm run dev -w @ba/web",
+    "bundle:cpanel": "node scripts/bundle-cpanel.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.20.4",

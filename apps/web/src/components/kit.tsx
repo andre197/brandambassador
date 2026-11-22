@@ -71,6 +71,7 @@ export function useFmt() {
   const locale = useLocale();
   const tag = locale === 'en' ? 'en-GB' : 'bg-BG';
   const t = useTranslations('units');
+  const tm = useTranslations('commissionTerms');
   return useMemo(() => {
     const eur = new Intl.NumberFormat(tag, { style: 'currency', currency: 'EUR' });
     const num = new Intl.NumberFormat(tag, { maximumFractionDigits: 3 });
@@ -82,12 +83,15 @@ export function useFmt() {
       unit: (u: string) => t(u as never),
       qty: (milli: number, unit?: string) => `${num.format(Number(milli) / 1000)}${unit ? ` ${t(unit as never)}` : ''}`,
       pct: (bp: number | null | undefined) => (bp === null || bp === undefined ? '-' : `${pct.format(bp / 100)}%`),
+      /** A commission: "10%" or "0,20 € / unit"; with goods that have their own amount, "... + by goods". */
+      commission: (type: string | null | undefined, bp: number | null | undefined, unitCents: number | null | undefined, byGoods?: boolean) =>
+        `${type === 'per_unit' ? `${eur.format(Number(unitCents ?? 0) / 100)} / ${t('perUnit')}` : bp === null || bp === undefined ? '-' : `${pct.format(bp / 100)}%`}${byGoods ? ` + ${tm('byGoods')}` : ''}`,
       date: (iso: string | null | undefined) => (iso ? day.format(new Date(`${String(iso).slice(0, 10)}T00:00:00Z`)) : '-'),
       dateTime: (iso: string | null | undefined) => (iso ? dt.format(new Date(iso)) : '-'),
       /** Cents → the "12.50" text of a money input. */
       eurInput: (cents: number | null | undefined) => (cents === null || cents === undefined ? '' : (Number(cents) / 100).toFixed(2)),
     };
-  }, [tag, t]);
+  }, [tag, t, tm]);
 }
 
 export const todayIso = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Sofia' }).format(new Date());
@@ -404,6 +408,52 @@ export function Modal({ title, open, onClose, children, wide }: { title: ReactNo
 }
 
 /** Downloads rows as a CSV file (UTF-8 with BOM, so Excel shows Cyrillic). */
+/**
+ * Opens a print-ready page with one table and the browser's print dialog, where it can be printed
+ * or saved as PDF ("Save as PDF"). The browser renders Cyrillic itself, so no font embedding is needed.
+ * `numeric` marks the columns to align right.
+ */
+export function printTable(title: string, head: string[], rows: (string | number | null | undefined)[][], opts: { subtitle?: string; numeric?: number[]; footer?: (string | number | null | undefined)[] } = {}) {
+  const esc = (v: string | number | null | undefined) =>
+    (v === null || v === undefined ? '' : String(v)).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+  const num = new Set(opts.numeric ?? []);
+  const cell = (tag: 'td' | 'th', v: string | number | null | undefined, i: number) => `<${tag}${num.has(i) ? ' class="n"' : ''}>${esc(v)}</${tag}>`;
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>
+    @page { size: A4 landscape; margin: 12mm; }
+    body { font-family: Arial, Helvetica, sans-serif; color: #111; font-size: 11px; margin: 0; }
+    h1 { font-size: 16px; margin: 0 0 2px; } p { margin: 0 0 10px; color: #555; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border: 1px solid #bbb; padding: 4px 6px; text-align: left; vertical-align: top; }
+    th { background: #eee; } td.n, th.n { text-align: right; white-space: nowrap; }
+    tfoot td { font-weight: bold; background: #f6f6f6; }
+    thead { display: table-header-group; } tr { page-break-inside: avoid; }
+  </style></head><body><h1>${esc(title)}</h1>${opts.subtitle ? `<p>${esc(opts.subtitle)}</p>` : ''}
+  <table><thead><tr>${head.map((h, i) => cell('th', h, i)).join('')}</tr></thead>
+  <tbody>${rows.map((r) => `<tr>${r.map((v, i) => cell('td', v, i)).join('')}</tr>`).join('')}</tbody>
+  ${opts.footer ? `<tfoot><tr>${opts.footer.map((v, i) => cell('td', v, i)).join('')}</tr></tfoot>` : ''}
+  </table><script>window.onload = () => { window.focus(); window.print(); };</script></body></html>`;
+  const url = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
+  const w = window.open(url, '_blank');
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  return Boolean(w);
+}
+
+/** "Export": CSV download or a print-ready table (print or save as PDF). */
+export function ExportButtons({ onCsv, onPdf, disabled }: { onCsv(): void; onPdf(): void; disabled?: boolean }) {
+  const t = useTranslations('common');
+  return (
+    <div className="flex items-center gap-1">
+      <span className="text-[12px] text-neutral-500">{t('export')}:</span>
+      <Btn size="sm" onClick={onCsv} disabled={disabled}>
+        CSV
+      </Btn>
+      <Btn size="sm" onClick={onPdf} disabled={disabled}>
+        PDF
+      </Btn>
+    </div>
+  );
+}
+
 export function downloadCsv(filename: string, rows: (string | number | null | undefined)[][]) {
   const esc = (v: string | number | null | undefined) => {
     const s = v === null || v === undefined ? '' : String(v);

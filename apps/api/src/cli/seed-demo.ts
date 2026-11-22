@@ -40,7 +40,9 @@ try {
       contact_person: 'Иван Петров',
       notes: null,
       active: true,
+      commission_type: 'percent',
       commission_percent: null,
+      commission_unit: null,
       default_vat_percent: 2000,
       delivery_method: 'own_transport',
       delivery_note: 'Хладилен бус, вторник и петък',
@@ -84,7 +86,6 @@ try {
     await s.parties.savePair(producerId, {
       merchant_id: shop2.id,
       status: 'attracted',
-      commission_percent: 1200,
       introduced_on: addDays(sofiaToday(), -200),
       introduced_how: 'Среща на място',
       territory: 'Пловдив',
@@ -104,7 +105,6 @@ try {
     const o1 = await s.orders.create(admin, { producer_id: producerId, merchant_id: shop1, order_date: addDays(sofiaToday(), -20), merchant_ref: 'PO-778', requested_delivery_on: null, note: null, items: [{ good_id: g1, quantity: 20_000 }, { good_id: g3, quantity: 120_000 }] });
     await s.orders.setStatus(producerActor, o1.id, { status: 'confirmed', reason: null });
     await s.orders.updateDelivery(producerActor, o1.id, { delivery_method: 'own_transport', delivery_note: null, planned_delivery_on: addDays(sofiaToday(), -18), delivered_on: addDays(sofiaToday(), -18) });
-    await s.orders.updateInvoice(producerActor, o1.id, { invoice_number: '0000001234', invoice_date: addDays(sofiaToday(), -18), invoice_method: 'email', invoice_note: null });
     await s.orders.addPayment(producerActor, o1.id, { amount: 50_880, paid_on: addDays(sofiaToday(), -12), note: null });
     await s.orders.addCommissionPayment(admin, o1.id, { amount: 2000, paid_on: addDays(sofiaToday(), -8), note: 'Частично' });
 

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { isValidEik, normalizeEik } from './eik.js';
 import { eurToCents, percentToBp, qtyToMilli } from './money.js';
-import { DELIVERY_METHODS, INVOICE_METHODS, LOCALES, ORDER_STATUSES, PAIR_STATUSES, REMINDER_STATUSES, UNITS } from './types.js';
+import { COMMISSION_TYPES, DELIVERY_METHODS, INVOICE_METHODS, LOCALES, ORDER_STATUSES, PAIR_STATUSES, REMINDER_STATUSES, UNITS } from './types.js';
 
 /** Validation messages are i18n keys resolved by the web app (`validation.*`). */
 export const V = {
@@ -118,7 +118,7 @@ const party = {
   name: requiredText(200),
   eik: eikSchema,
   phone: phoneSchema,
-  email: emailSchema,
+  email: optionalEmail,
   address: requiredText(500),
   contact_person: optionalText(200),
   notes: optionalText(4000),
@@ -127,8 +127,11 @@ const party = {
 
 export const producerInputSchema = z.object({
   ...party,
+  commission_type: z.enum(COMMISSION_TYPES).default('percent'),
   /** null: the default from the settings (10% unless changed). */
   commission_percent: percentBpSchema.nullish().transform((v) => v ?? null),
+  /** Euro per unit; required when the type is per_unit. */
+  commission_unit: centsSchema.nullish().transform((v) => v ?? null),
   default_vat_percent: percentBpSchema.default(20 * 100),
   delivery_method: z.enum(DELIVERY_METHODS).default('own_transport'),
   delivery_note: optionalText(1000),
@@ -136,8 +139,16 @@ export const producerInputSchema = z.object({
   invoice_note: optionalText(1000),
   contract_number: optionalText(100),
   contract_signed_on: optionalDate,
-});
+}).refine((v) => v.commission_type !== 'per_unit' || v.commission_unit !== null, { path: ['commission_unit'], message: V.required });
 export type ProducerInput = z.output<typeof producerInputSchema>;
+
+/** One shop of a merchant: a short alias and its address. */
+export const shopInputSchema = z.object({
+  alias: requiredText(100),
+  address: requiredText(500),
+  active: z.boolean().default(true),
+});
+export type ShopInput = z.output<typeof shopInputSchema>;
 
 export const merchantInputSchema = z.object({
   ...party,
@@ -173,8 +184,6 @@ export const merchantProfileSchema = z.object({
 export const pairInputSchema = z.object({
   merchant_id: uuidSchema,
   status: z.enum(PAIR_STATUSES).default('attracted'),
-  /** null: the producer's rate. */
-  commission_percent: percentBpSchema.nullish().transform((v) => v ?? null),
   introduced_on: optionalDate,
   introduced_how: optionalText(500),
   territory: optionalText(300),
@@ -189,6 +198,9 @@ export type PairInput = z.output<typeof pairInputSchema>;
 
 // ─── Goods ───
 
+/** An optional euro amount: missing = keep as it is, empty or null = none. */
+const optionalCents = z.union([z.literal('').transform(() => null), centsSchema]).nullish();
+
 export const goodInputSchema = z.object({
   name_bg: requiredText(200),
   name_en: optionalText(200),
@@ -199,6 +211,8 @@ export const goodInputSchema = z.object({
   vat_percent: percentBpSchema.default(20 * 100),
   description: optionalText(2000),
   active: z.boolean().default(true),
+  /** Admin only: a fixed commission per unit for this good, in euro. Missing: unchanged. */
+  commission_unit: optionalCents,
 });
 export type GoodInput = z.output<typeof goodInputSchema>;
 
@@ -207,12 +221,16 @@ export type GoodInput = z.output<typeof goodInputSchema>;
 export const orderCreateSchema = z.object({
   producer_id: uuidSchema.optional(),
   merchant_id: uuidSchema.optional(),
+  /** The shop for lines that do not name one. */
+  shop_id: uuidSchema.optional(),
   order_date: optionalDate,
   merchant_ref: optionalText(100),
   requested_delivery_on: optionalDate,
   note: optionalText(2000),
   items: z
-    .array(z.object({ good_id: uuidSchema, quantity: quantityMilliSchema }))
+    // unit_price: admin only. Without it the line gets the price from the last order with this merchant, else the list price.
+    // shop_id: which shop of the merchant the line is for; required when the merchant has shops.
+    .array(z.object({ good_id: uuidSchema, quantity: quantityMilliSchema, unit_price: centsSchema.optional(), shop_id: uuidSchema.optional() }))
     .min(1, V.itemsRequired)
     .max(200, V.tooLong),
 });
@@ -228,11 +246,17 @@ export const orderAdminEditSchema = z.object({
         quantity: quantityMilliSchema,
         unit_price: centsSchema,
         vat_percent: percentBpSchema,
+        /** A fixed commission per unit for this line. Missing: as it is (a new line: the good's). Null: the order's. */
+        commission_unit: optionalCents,
+        /** The merchant's shop for this line. Missing: as it is. Null: none. */
+        shop_id: uuidSchema.nullish(),
       }),
     )
     .min(1, V.itemsRequired)
     .max(200, V.tooLong),
-  commission_percent: percentBpSchema,
+  commission_type: z.enum(COMMISSION_TYPES).default('percent'),
+  commission_percent: percentBpSchema.default(0),
+  commission_unit: centsSchema.default(0),
   returned_net: centsSchema.default(0),
   returned_note: optionalText(1000),
   /** Also store the new prices as the agreed prices for this producer and merchant. */
@@ -245,13 +269,6 @@ export const orderDeliverySchema = z.object({
   delivery_note: optionalText(1000),
   planned_delivery_on: optionalDate,
   delivered_on: optionalDate,
-});
-
-export const orderInvoiceSchema = z.object({
-  invoice_number: optionalText(50),
-  invoice_date: optionalDate,
-  invoice_method: z.enum(INVOICE_METHODS),
-  invoice_note: optionalText(1000),
 });
 
 export const orderStatusSchema = z.object({

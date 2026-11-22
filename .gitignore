@@ -13,3 +13,8 @@ next-env.d.ts
 # Signed contracts and templates stay local (company data); the rules are summarised in docs/CONTRACT-RULES.md.
 contracts/
 *.docx
+
+# Deployment bundle (built by npm run bundle:cpanel)
+!.env.cpanel.example
+deploy/cpanel-bundle/
+deploy/*.tar.gz

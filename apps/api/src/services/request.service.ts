@@ -9,12 +9,15 @@ import type { OrderService } from './order.service.js';
 
 const SELECT = `SELECT r.*, g.name_bg AS good_name, g.name_en AS good_name_en, g.unit, p.name AS producer_name, m.name AS merchant_name, o.number AS order_number,
        u.email AS requested_by_email
-  FROM price_requests r JOIN goods g ON g.id = r.good_id JOIN producers p ON p.id = r.producer_id JOIN merchants m ON m.id = r.merchant_id
+  FROM price_requests r JOIN goods g ON g.id = r.good_id JOIN producers p ON p.id = r.producer_id LEFT JOIN merchants m ON m.id = r.merchant_id
   LEFT JOIN orders o ON o.id = r.order_id LEFT JOIN users u ON u.id = r.requested_by`;
 
 /**
- * Prices in orders can only be changed by the admin. Producers and merchants ask for a change
- * here (with an optional description); the admin approves with a new price, or rejects.
+ * Prices in use can only be changed by the admin. Producers and merchants ask for a change here
+ * (with an optional description); the admin approves with a new price, or rejects.
+ * - With a merchant: that merchant's agreed price (the price of its orders).
+ * - Without a merchant (producers only): the good's own price, for merchants that have not ordered it yet.
+ *   Approving it changes nothing else: agreed prices and existing orders stay as they are.
  */
 export class RequestService {
   constructor(
@@ -36,19 +39,21 @@ export class RequestService {
     if (actor.role === 'admin') throw new AppError('forbidden');
     const good = await one<{ id: string; producer_id: string; name_bg: string; price_cents: number }>(this.deps.db, 'SELECT id, producer_id, name_bg, price_cents FROM goods WHERE id = $1 AND NOT archived', [input.good_id]);
     if (!good || (actor.role === 'producer' && good.producer_id !== actor.producerId)) throw new AppError('not_found');
-    const merchantId = actor.role === 'merchant' ? actor.merchantId! : input.merchant_id;
-    if (!merchantId) throw new AppError('validation_failed', { fields: { merchant_id: 'validation.required' } });
+    // A producer without a merchant asks for the good's own price.
+    const merchantId = actor.role === 'merchant' ? actor.merchantId! : (input.merchant_id ?? null);
+    if (!merchantId && input.order_id) throw new AppError('validation_failed', { fields: { merchant_id: 'validation.required' } });
+    if (!merchantId && input.proposed_price === null) throw new AppError('validation_failed', { fields: { proposed_price: 'validation.price_required' } });
     if (input.order_id) {
       const o = await one<{ producer_id: string; merchant_id: string }>(this.deps.db, 'SELECT producer_id, merchant_id FROM orders WHERE id = $1', [input.order_id]);
       if (!o || o.producer_id !== good.producer_id || o.merchant_id !== merchantId) throw new AppError('not_found');
     }
-    const names = await one<{ producer: string; merchant: string }>(
+    const names = await one<{ producer: string; merchant: string | null }>(
       this.deps.db,
-      'SELECT p.name AS producer, m.name AS merchant FROM producers p, merchants m WHERE p.id = $1 AND m.id = $2',
+      'SELECT p.name AS producer, m.name AS merchant FROM producers p LEFT JOIN merchants m ON m.id = $2 WHERE p.id = $1',
       [good.producer_id, merchantId],
     );
-    if (!names) throw new AppError('not_found');
-    const agreed = await one<{ price_cents: number }>(this.deps.db, 'SELECT price_cents FROM agreed_prices WHERE good_id = $1 AND merchant_id = $2', [good.id, merchantId]);
+    if (!names || (merchantId && !names.merchant)) throw new AppError('not_found');
+    const agreed = merchantId ? await one<{ price_cents: number }>(this.deps.db, 'SELECT price_cents FROM agreed_prices WHERE good_id = $1 AND merchant_id = $2', [good.id, merchantId]) : null;
     const current = agreed?.price_cents ?? good.price_cents;
 
     return withTx(this.deps.db, async (tx) => {
@@ -62,7 +67,17 @@ export class RequestService {
         tx,
         { audience: 'admin' },
         'request_created',
-        { number: r!.number, good: good.name_bg, producer: names.producer, merchant: names.merchant, current, proposed: input.proposed_price, description: input.description, by: actor.role },
+        {
+          number: r!.number,
+          good: good.name_bg,
+          producer: names.producer,
+          merchant: names.merchant ?? '',
+          kind: merchantId ? 'agreed' : 'list',
+          current,
+          proposed: input.proposed_price,
+          description: input.description,
+          by: actor.role,
+        },
         '/requests',
       );
       return r!;
@@ -92,7 +107,7 @@ export class RequestService {
   async resolve(actor: Actor, id: string, input: z.output<typeof resolveRequestSchema>) {
     if (actor.role !== 'admin') throw new AppError('forbidden');
     await withTx(this.deps.db, async (tx) => {
-      const r = await one<{ id: string; number: number; status: string; good_id: string; producer_id: string; merchant_id: string; good_name: string; order_id: string | null }>(
+      const r = await one<{ id: string; number: number; status: string; good_id: string; producer_id: string; merchant_id: string | null; good_name: string; order_id: string | null }>(
         tx,
         `SELECT r.id, r.number, r.status, r.good_id, r.producer_id, r.merchant_id, r.order_id, g.name_bg AS good_name FROM price_requests r JOIN goods g ON g.id = r.good_id WHERE r.id = $1 FOR UPDATE OF r`,
         [id],
@@ -100,7 +115,11 @@ export class RequestService {
       if (!r) throw new AppError('not_found');
       if (r.status !== 'pending') throw new AppError('invalid_state');
       let orders: number[] = [];
-      if (input.decision === 'approved') orders = await this.applyPrice(tx, r.good_id, r.merchant_id, input.new_price!, input.apply_to_open_orders);
+      if (input.decision === 'approved') {
+        if (r.merchant_id) orders = await this.applyPrice(tx, r.good_id, r.merchant_id, input.new_price!, input.apply_to_open_orders);
+        // The good's own price: nothing else changes (agreed prices and orders keep theirs).
+        else await tx.query('UPDATE goods SET price_cents = $2, updated_at = now() WHERE id = $1', [r.good_id, input.new_price]);
+      }
       await tx.query(`UPDATE price_requests SET status = $2, new_price_cents = $3, response = $4, resolved_by = $5, resolved_at = now() WHERE id = $1`, [
         id,
         input.decision,
@@ -110,7 +129,7 @@ export class RequestService {
       ]);
       const data = { number: r.number, good: r.good_name, decision: input.decision, price: input.new_price, response: input.response, orders };
       await this.notifications.notify(tx, { audience: 'producer', producerId: r.producer_id }, 'request_resolved', data, '/requests');
-      await this.notifications.notify(tx, { audience: 'merchant', merchantId: r.merchant_id }, 'request_resolved', data, '/requests');
+      if (r.merchant_id) await this.notifications.notify(tx, { audience: 'merchant', merchantId: r.merchant_id }, 'request_resolved', data, '/requests');
     });
     return one(this.deps.db, `${SELECT} WHERE r.id = $1`, [id]);
   }

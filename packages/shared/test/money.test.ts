@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { addWorkingDays, bgHolidays, isWorkingDay, orthodoxEaster } from '../src/calendar.js';
 import { isValidEik } from '../src/eik.js';
-import { calculateOrder, releaseFeeCents, terminationPenaltyCents } from '../src/money.js';
+import { calculateOrder, lineAmounts, releaseFeeCents, terminationPenaltyCents } from '../src/money.js';
 
 const line = (qty: number, priceCents: number, vatBp = 2000) => ({ quantityMilli: qty * 1000, unitPriceCents: priceCents, vatBp });
 
@@ -17,20 +17,20 @@ describe('calculateOrder', () => {
     expect(c.paymentStatus).toBe('unpaid');
   });
 
-  it('accrues commission in proportion to what the merchant paid (art. 8(2)) with a 5-working-day due date', () => {
-    const c = calculateOrder({
-      lines: [line(100, 100)], // 100 € net, 120 € gross
-      commissionBp: 1000,
-      payments: [{ amountCents: 6000, paidOn: '2026-11-13' }], // a Friday, half paid
-      commissionPayments: [],
-      today: '2026-11-19',
-    });
-    expect(c.paymentStatus).toBe('partial');
-    expect(c.commissionAccruedCents).toBe(500);
+  it('owes the full commission once delivered, paid or not, due 5 working days after the delivery', () => {
+    const base = { lines: [line(100, 100)], commissionBp: 1000, commissionPayments: [] }; // 100 € net, 120 € gross
+    // Not delivered: nothing owed yet, even if the merchant paid.
+    const before = calculateOrder({ ...base, payments: [{ amountCents: 12000, paidOn: '2026-11-10' }], today: '2026-11-19' });
+    expect(before.commissionAccruedCents).toBe(0);
+    expect(before.commissionStatus).toBe('awaiting_payment');
+    // Delivered on a Friday, nothing paid by the merchant: all 10 € owed, due the next Friday.
+    const c = calculateOrder({ ...base, deliveredOn: '2026-11-13', payments: [], today: '2026-11-19' });
+    expect(c.paymentStatus).toBe('unpaid');
+    expect(c.commissionAccruedCents).toBe(1000);
     expect(c.tranches[0]!.dueOn).toBe('2026-11-20');
     expect(c.commissionStatus).toBe('due');
-    const later = calculateOrder({ ...{ lines: [line(100, 100)], commissionBp: 1000, payments: [{ amountCents: 6000, paidOn: '2026-11-13' }], commissionPayments: [] }, today: '2026-11-23' });
-    expect(later.commissionOverdueCents).toBe(500);
+    const later = calculateOrder({ ...base, deliveredOn: '2026-11-13', payments: [], today: '2026-11-23' });
+    expect(later.commissionOverdueCents).toBe(1000);
     expect(later.commissionStatus).toBe('overdue');
   });
 
@@ -38,7 +38,8 @@ describe('calculateOrder', () => {
     const c = calculateOrder({
       lines: [line(1, 10000)],
       commissionBp: 1250,
-      payments: [{ amountCents: 12000, paidOn: '2026-10-01' }],
+      deliveredOn: '2026-10-01',
+      payments: [],
       commissionPayments: [{ amountCents: 1250 }],
       today: '2026-11-20',
     });
@@ -47,8 +48,40 @@ describe('calculateOrder', () => {
     expect(c.commissionStatus).toBe('settled');
   });
 
-  it('reduces the base by returned goods and never charges for the unpaid part (art. 10)', () => {
-    const c = calculateOrder({ lines: [line(10, 1000)], returnedNetCents: 2000, commissionBp: 1000, payments: [{ amountCents: 9600, paidOn: '2026-11-02' }], commissionPayments: [], today: '2026-11-20' });
+  it('multiplies the price incl. VAT by the quantity, then takes the total excl. VAT out of it', () => {
+    // 0.23 € excl. VAT at 20% is 0.28 € incl. VAT per piece; 540 pieces = 151.20 €, of which 126.00 € excl. VAT.
+    expect(lineAmounts(540_000, 23, 2000)).toEqual({ grossCents: 15120, netCents: 12600, vatCents: 2520 });
+    const c = calculateOrder({ lines: [line(540, 23)], commissionBp: 1000, payments: [], commissionPayments: [], today: '2026-11-20' });
+    expect(c.grossCents).toBe(15120);
+    expect(c.netCents).toBe(12600);
+    expect(c.commissionCents).toBe(1260);
+  });
+
+  it('charges a fixed amount per unit when the commission is per unit', () => {
+    // 10 units + 2.5 units at 0.30 € each = 3.75 €, whatever the prices.
+    const c = calculateOrder({
+      lines: [line(10, 250), { quantityMilli: 2500, unitPriceCents: 1000, vatBp: 2000 }],
+      commissionType: 'per_unit',
+      commissionBp: 1000,
+      commissionUnitCents: 30,
+      deliveredOn: '2026-11-02',
+      payments: [{ amountCents: 3000, paidOn: '2026-11-02' }],
+      commissionPayments: [],
+      today: '2026-11-20',
+    });
+    expect(c.netCents).toBe(5000);
+    expect(c.commissionCents).toBe(375);
+    expect(c.commissionType).toBe('per_unit');
+    // Delivered: all of it is owed, although the merchant paid only half.
+    expect(c.commissionAccruedCents).toBe(375);
+
+    // Returns lower it in the same proportion as the net value: 20% returned.
+    const r = calculateOrder({ lines: [line(10, 1000)], returnedNetCents: 2000, commissionType: 'per_unit', commissionBp: 0, commissionUnitCents: 50, payments: [], commissionPayments: [], today: '2026-11-20' });
+    expect(r.commissionCents).toBe(400);
+  });
+
+  it('reduces the base by returned goods (art. 10)', () => {
+    const c = calculateOrder({ lines: [line(10, 1000)], returnedNetCents: 2000, commissionBp: 1000, deliveredOn: '2026-11-02', payments: [{ amountCents: 9600, paidOn: '2026-11-02' }], commissionPayments: [], today: '2026-11-20' });
     expect(c.baseNetCents).toBe(8000);
     expect(c.payableGrossCents).toBe(9600);
     expect(c.commissionCents).toBe(800);
@@ -57,7 +90,7 @@ describe('calculateOrder', () => {
   });
 
   it('caps overpayment and has no commission at 0%', () => {
-    const c = calculateOrder({ lines: [line(1, 1000)], commissionBp: 0, payments: [{ amountCents: 99999, paidOn: '2026-11-02' }], commissionPayments: [], today: '2026-11-20' });
+    const c = calculateOrder({ lines: [line(1, 1000)], commissionBp: 0, deliveredOn: '2026-11-02', payments: [{ amountCents: 99999, paidOn: '2026-11-02' }], commissionPayments: [], today: '2026-11-20' });
     expect(c.commissionStatus).toBe('none');
     expect(c.commissionAccruedCents).toBe(0);
   });

@@ -1,6 +1,6 @@
 'use client';
 
-import { DELIVERY_METHODS, INVOICE_METHODS } from '@ba/shared';
+import { COMMISSION_TYPES, DELIVERY_METHODS, INVOICE_METHODS } from '@ba/shared';
 import { useTranslations } from 'next-intl';
 import { type FormEvent, useState } from 'react';
 import { api } from '@/lib/api-client';
@@ -32,7 +32,7 @@ function CommonFields({ form, set, field }: { form: Form; set(k: string, v: stri
       {input('eik', t('eik'), { required: true, hint: t('eikHint') })}
       {input('contact_person', t('contactPerson'))}
       {input('phone', t('phone'), { required: true, type: 'tel' })}
-      {input('email', t('email'), { required: true, type: 'email' })}
+      {input('email', t('email'), { type: 'email' })}
       <Txt className="sm:col-span-2" label={t('address')} required value={str(form.address)} onChange={(e) => set('address', e.target.value)} error={field('address')} />
     </div>
   );
@@ -43,6 +43,7 @@ export function ProducerForm({ initial, onSaved }: { initial: Producer | null; o
   const tc = useTranslations('common');
   const tdm = useTranslations('deliveryMethods');
   const tim = useTranslations('invoiceMethods');
+  const tm = useTranslations('commissionTerms');
   const action = useAction();
   const [saved, setSaved] = useState(false);
   const [form, setForm] = useState<Form>({
@@ -54,7 +55,9 @@ export function ProducerForm({ initial, onSaved }: { initial: Producer | null; o
     contact_person: str(initial?.contact_person),
     notes: str(initial?.notes),
     active: initial?.active ?? true,
+    commission_type: initial?.commission_type ?? 'percent',
     commission_percent: initial?.commission_bp !== undefined ? String(initial.commission_bp / 100) : '',
+    commission_unit: initial?.commission_unit_cents ? (initial.commission_unit_cents / 100).toFixed(2) : '',
     default_vat_percent: initial ? String(initial.default_vat_bp / 100) : '20',
     delivery_method: initial?.delivery_method ?? 'own_transport',
     delivery_note: str(initial?.delivery_note),
@@ -69,7 +72,7 @@ export function ProducerForm({ initial, onSaved }: { initial: Producer | null; o
   };
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const body = { ...form, commission_percent: form.commission_percent === '' ? null : form.commission_percent };
+    const body = { ...form, commission_percent: form.commission_percent === '' ? null : form.commission_percent, commission_unit: form.commission_unit === '' ? null : form.commission_unit };
     const r = await action.run(() => api<{ id: string }>(initial ? `/producers/${initial.id}` : '/producers', { method: initial ? 'PUT' : 'POST', body }));
     if (r) {
       setSaved(true);
@@ -83,7 +86,18 @@ export function ProducerForm({ initial, onSaved }: { initial: Producer | null; o
       </Card>
       <Card title={t('terms')}>
         <div className="grid gap-4 sm:grid-cols-2">
-          <In label={t('commissionPercent')} inputMode="decimal" value={str(form.commission_percent)} onChange={(e) => set('commission_percent', e.target.value)} error={action.field('commission_percent')} hint={t('commissionHint')} placeholder="10" />
+          <Sel label={tm('type')} value={str(form.commission_type)} onChange={(e) => set('commission_type', e.target.value)}>
+            {COMMISSION_TYPES.map((x) => (
+              <option key={x} value={x}>
+                {tm(`types.${x}`)}
+              </option>
+            ))}
+          </Sel>
+          {form.commission_type === 'per_unit' ? (
+            <In label={tm('unitAmount')} inputMode="decimal" value={str(form.commission_unit)} onChange={(e) => set('commission_unit', e.target.value)} error={action.field('commission_unit')} hint={tm('unitHint')} required />
+          ) : (
+            <In label={t('commissionPercent')} inputMode="decimal" value={str(form.commission_percent)} onChange={(e) => set('commission_percent', e.target.value)} error={action.field('commission_percent')} hint={t('commissionHint')} placeholder="10" />
+          )}
           <In label={t('defaultVat')} inputMode="decimal" value={str(form.default_vat_percent)} onChange={(e) => set('default_vat_percent', e.target.value)} error={action.field('default_vat_percent')} />
           <In label={t('contractNumber')} value={str(form.contract_number)} onChange={(e) => set('contract_number', e.target.value)} />
           <In type="date" label={t('contractSignedOn')} value={str(form.contract_signed_on)} onChange={(e) => set('contract_signed_on', e.target.value)} error={action.field('contract_signed_on')} hint={t('contractHint')} />

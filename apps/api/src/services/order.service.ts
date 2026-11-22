@@ -1,11 +1,11 @@
 import {
   calculateOrder,
+  type CommissionType,
   type OrderAdminEditInput,
   type OrderCalc,
   type OrderCreateInput,
   type OrderStatus,
   orderDeliverySchema,
-  orderInvoiceSchema,
   orderListQuerySchema,
   orderReturnSchema,
   orderStatusSchema,
@@ -19,7 +19,7 @@ import type { Deps } from '../deps.js';
 import { AppError } from '../lib/errors.js';
 import type { Actor } from '../types.js';
 import type { NotificationService, Target } from './notification.service.js';
-import { effectiveCommission } from './party.service.js';
+import { effectiveCommission, goodCommissionApplies, type PairCommissionRow } from './party.service.js';
 
 export interface OrderRow {
   id: string;
@@ -38,12 +38,9 @@ export interface OrderRow {
   delivery_note: string | null;
   planned_delivery_on: string | null;
   delivered_on: string | null;
-  invoice_number: string | null;
-  invoice_date: string | null;
-  invoice_method: string;
-  invoice_note: string | null;
-  invoice_receive_method: string;
+  commission_type: CommissionType;
   commission_bp: number;
+  commission_unit_cents: number;
   returned_net_cents: number;
   returned_note: string | null;
   cancel_reason: string | null;
@@ -54,8 +51,10 @@ export interface OrderRow {
   updated_at: string;
 }
 
-const ORDER_SELECT = `SELECT o.*, p.name AS producer_name, m.name AS merchant_name
-  FROM orders o JOIN producers p ON p.id = o.producer_id JOIN merchants m ON m.id = o.merchant_id`;
+const ORDER_FROM = `FROM orders o JOIN producers p ON p.id = o.producer_id JOIN merchants m ON m.id = o.merchant_id`;
+const ORDER_SELECT = `SELECT o.*, p.name AS producer_name, m.name AS merchant_name, m.eik AS merchant_eik,
+  (SELECT string_agg(DISTINCT oi.shop_alias, ', ') FROM order_items oi WHERE oi.order_id = o.id) AS shop_aliases
+  ${ORDER_FROM}`;
 
 /** Who may move an order from one status to another. */
 const TRANSITIONS: Record<Role, Partial<Record<OrderStatus, OrderStatus[]>>> = {
@@ -64,7 +63,7 @@ const TRANSITIONS: Record<Role, Partial<Record<OrderStatus, OrderStatus[]>>> = {
   merchant: { new: ['cancelled'] },
 };
 
-type Calcable = { id: string; status: OrderStatus; commission_bp: number; returned_net_cents: number };
+type Calcable = { id: string; status: OrderStatus; delivered_on: string | null; commission_type: CommissionType; commission_bp: number; commission_unit_cents: number; returned_net_cents: number };
 
 /** What a merchant may see of the totals: the commission is between the producer and me (art. 20). */
 function merchantCalc(c: OrderCalc) {
@@ -80,8 +79,8 @@ function merchantCalc(c: OrderCalc) {
   };
 }
 
-function stripCommission(row: OrderRow): Omit<OrderRow, 'commission_bp' | 'commission_cents'> {
-  const { commission_bp: _a, commission_cents: _b, ...rest } = row;
+function stripCommission(row: OrderRow): Omit<OrderRow, 'commission_type' | 'commission_bp' | 'commission_unit_cents' | 'commission_cents'> {
+  const { commission_type: _t, commission_bp: _a, commission_unit_cents: _u, commission_cents: _b, ...rest } = row;
   return rest;
 }
 
@@ -109,7 +108,11 @@ export class OrderService {
     const out = new Map<string, OrderCalc>();
     if (!ids.length) return out;
     // Sequential: `db` may be a transaction client, which runs one query at a time.
-    const items = await many<{ order_id: string; quantity_milli: number; unit_price_cents: number; vat_bp: number }>(db, 'SELECT order_id, quantity_milli, unit_price_cents, vat_bp FROM order_items WHERE order_id = ANY($1)', [ids]);
+    const items = await many<{ order_id: string; quantity_milli: number; unit_price_cents: number; vat_bp: number; commission_unit_cents: number | null }>(
+      db,
+      'SELECT order_id, quantity_milli, unit_price_cents, vat_bp, commission_unit_cents FROM order_items WHERE order_id = ANY($1)',
+      [ids],
+    );
     const payments = await many<{ order_id: string; amount_cents: number; paid_on: string }>(db, 'SELECT order_id, amount_cents, paid_on FROM order_payments WHERE order_id = ANY($1)', [ids]);
     const commissions = await many<{ order_id: string; amount_cents: number }>(db, 'SELECT order_id, amount_cents FROM commission_payments WHERE order_id = ANY($1)', [ids]);
     const today = this.today();
@@ -117,10 +120,17 @@ export class OrderService {
       out.set(
         o.id,
         calculateOrder({
-          lines: items.filter((i) => i.order_id === o.id).map((i) => ({ quantityMilli: i.quantity_milli, unitPriceCents: i.unit_price_cents, vatBp: i.vat_bp })),
+          lines: items
+            .filter((i) => i.order_id === o.id)
+            // A cancelled order earns nothing, not even the goods' own commission.
+            .map((i) => ({ quantityMilli: i.quantity_milli, unitPriceCents: i.unit_price_cents, vatBp: i.vat_bp, commissionUnitCents: o.status === 'cancelled' ? null : i.commission_unit_cents })),
           returnedNetCents: o.returned_net_cents,
           // A cancelled order earns nothing.
+          // The commission is owed from the delivery, whether or not the merchant has paid.
+          deliveredOn: o.status === 'delivered' ? o.delivered_on : null,
+          commissionType: o.commission_type,
           commissionBp: o.status === 'cancelled' ? 0 : o.commission_bp,
+          commissionUnitCents: o.status === 'cancelled' ? 0 : o.commission_unit_cents,
           payments: payments.filter((p) => p.order_id === o.id).map((p) => ({ amountCents: p.amount_cents, paidOn: p.paid_on })),
           commissionPayments: commissions.filter((p) => p.order_id === o.id).map((p) => ({ amountCents: p.amount_cents })),
           today,
@@ -130,8 +140,24 @@ export class OrderService {
     return out;
   }
 
-  async list(actor: Actor, query: z.output<typeof orderListQuerySchema>) {
+  /** One row for each good of the orders that list() returns with the same filters. Not for merchants. */
+  async lines(actor: Actor, query: z.output<typeof orderListQuerySchema>) {
+    if (actor.role === 'merchant') throw new AppError('forbidden');
     const params: unknown[] = [];
+    const where = this.listWhere(actor, query, params);
+    return many(
+      this.deps.db,
+      `SELECT oi.id, o.id AS order_id, o.number, o.order_date, o.status, p.name AS producer_name, m.eik AS merchant_eik, m.name AS merchant_name,
+              oi.shop_alias, coalesce(oi.shop_address, m.address) AS address, oi.name_bg, oi.name_en, oi.quantity_milli, oi.unit,
+              oi.line_net_cents, oi.line_gross_cents
+         FROM orders o JOIN producers p ON p.id = o.producer_id JOIN merchants m ON m.id = o.merchant_id JOIN order_items oi ON oi.order_id = o.id
+        WHERE ${where.join(' AND ')} AND o.id IN (SELECT o.id ${ORDER_FROM} WHERE ${where.join(' AND ')} ORDER BY o.order_date DESC, o.number DESC LIMIT 500)
+        ORDER BY o.order_date DESC, o.number DESC, oi.sort_order, oi.name_bg`,
+      params,
+    );
+  }
+
+  private listWhere(actor: Actor, query: z.output<typeof orderListQuerySchema>, params: unknown[]) {
     const where = [this.scope(actor, params)];
     if (query.status) where.push(`o.status = $${params.push(query.status)}`);
     if (query.producer_id) where.push(`o.producer_id = $${params.push(query.producer_id)}`);
@@ -140,8 +166,15 @@ export class OrderService {
     if (query.to) where.push(`o.order_date <= $${params.push(query.to)}`);
     if (query.q) {
       const n = params.push(`%${query.q}%`);
-      where.push(`(o.number::text ILIKE $${n} OR p.name ILIKE $${n} OR m.name ILIKE $${n} OR o.merchant_ref ILIKE $${n} OR o.invoice_number ILIKE $${n})`);
+      where.push(`(o.number::text ILIKE $${n} OR p.name ILIKE $${n} OR m.name ILIKE $${n} OR o.merchant_ref ILIKE ${n}
+                   OR EXISTS (SELECT 1 FROM order_items si WHERE si.order_id = o.id AND si.shop_alias ILIKE ${n}))`);
     }
+    return where;
+  }
+
+  async list(actor: Actor, query: z.output<typeof orderListQuerySchema>) {
+    const params: unknown[] = [];
+    const where = this.listWhere(actor, query, params);
     const rows = await many<OrderRow>(this.deps.db, `${ORDER_SELECT} WHERE ${where.join(' AND ')} ORDER BY o.order_date DESC, o.number DESC LIMIT 500`, params);
     const calcs = await this.calcFor(this.deps.db, rows);
     return rows.map((r) => {
@@ -161,7 +194,7 @@ export class OrderService {
   async get(actor: Actor, id: string) {
     const o = await this.load(this.deps.db, actor, id);
     const [items, payments, commissionPayments, events, requests, producer, merchant] = await Promise.all([
-      many(this.deps.db, `SELECT oi.*, g.active AND NOT g.archived AS good_available FROM order_items oi LEFT JOIN goods g ON g.id = oi.good_id WHERE oi.order_id = $1 ORDER BY oi.sort_order, oi.name_bg`, [id]),
+      many<Record<string, unknown>>(this.deps.db, `SELECT oi.*, g.active AND NOT g.archived AS good_available FROM order_items oi LEFT JOIN goods g ON g.id = oi.good_id WHERE oi.order_id = $1 ORDER BY oi.shop_alias NULLS FIRST, oi.sort_order, oi.name_bg`, [id]),
       many(this.deps.db, 'SELECT id, amount_cents, paid_on, note, created_at FROM order_payments WHERE order_id = $1 ORDER BY paid_on, created_at', [id]),
       actor.role === 'merchant' ? Promise.resolve([]) : many(this.deps.db, 'SELECT id, amount_cents, paid_on, note, created_at FROM commission_payments WHERE order_id = $1 ORDER BY paid_on, created_at', [id]),
       many<{ type: string }>(
@@ -183,7 +216,15 @@ export class OrderService {
     const calc = (await this.calcFor(this.deps.db, [o])).get(id)!;
     const base = { items, payments, requests, producer, merchant };
     if (actor.role === 'merchant') {
-      return { ...stripCommission(o), ...base, events: events.filter((e) => !e.type.startsWith('commission')), calc: merchantCalc(calc) };
+      // The commission is between the producer and me: drop it from lines and history too.
+      const noCommission = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).filter(([k]) => !k.startsWith('commission')));
+      return {
+        ...stripCommission(o),
+        ...base,
+        items: items.map(noCommission),
+        events: events.filter((e) => !e.type.startsWith('commission')).map((e) => ({ ...e, data: noCommission(((e as Record<string, unknown>).data ?? {}) as Record<string, unknown>) })),
+        calc: merchantCalc(calc),
+      };
     }
     return { ...o, ...base, commission_payments: commissionPayments, events, calc };
   }
@@ -196,7 +237,7 @@ export class OrderService {
 
   /** Refreshes the cached totals of an order. */
   async recompute(db: Queryable, orderId: string): Promise<OrderCalc> {
-    const o = await one<Calcable>(db, 'SELECT id, status, commission_bp, returned_net_cents FROM orders WHERE id = $1', [orderId]);
+    const o = await one<Calcable>(db, 'SELECT id, status, delivered_on, commission_type, commission_bp, commission_unit_cents, returned_net_cents FROM orders WHERE id = $1', [orderId]);
     const calc = (await this.calcFor(db, [o!])).get(orderId)!;
     await db.query('UPDATE orders SET net_cents = $2, gross_cents = $3, commission_cents = $4, updated_at = now() WHERE id = $1', [orderId, calc.netCents, calc.grossCents, calc.commissionCents]);
     return calc;
@@ -230,21 +271,23 @@ export class OrderService {
     if (!producerId) fields.producer_id = 'validation.required';
     if (!merchantId) fields.merchant_id = 'validation.required';
     if (Object.keys(fields).length) throw new AppError('validation_failed', { fields });
+    // Only the admin sets prices; everyone else gets the merchant's current price.
+    if (actor.role !== 'admin' && input.items.some((i) => i.unit_price !== undefined)) throw new AppError('forbidden');
     const orderDate = input.order_date ?? this.today();
 
     const result = await withTx(this.deps.db, async (tx) => {
-      const producer = await one<{ id: string; name: string; active: boolean; commission_bp: number; delivery_method: string; delivery_note: string | null; invoice_method: string; invoice_note: string | null }>(
+      const producer = await one<{ id: string; name: string; active: boolean; delivery_method: string; delivery_note: string | null }>(
         tx,
-        'SELECT id, name, active, commission_bp, delivery_method, delivery_note, invoice_method, invoice_note FROM producers WHERE id = $1',
+        'SELECT id, name, active, delivery_method, delivery_note FROM producers WHERE id = $1',
         [producerId],
       );
-      const merchant = await one<{ id: string; name: string; active: boolean; invoice_method: string }>(tx, 'SELECT id, name, active, invoice_method FROM merchants WHERE id = $1', [merchantId]);
+      const merchant = await one<{ id: string; name: string; active: boolean }>(tx, 'SELECT id, name, active FROM merchants WHERE id = $1', [merchantId]);
       if (!producer || !merchant || (actor.role !== 'admin' && (!producer.active || !merchant.active))) throw new AppError('not_found');
 
       const goodIds = [...new Set(input.items.map((i) => i.good_id))];
-      const goods = await many<{ id: string; producer_id: string; name_bg: string; name_en: string | null; sku: string | null; unit: string; price_cents: number; vat_bp: number; active: boolean; archived: boolean }>(
+      const goods = await many<{ id: string; producer_id: string; name_bg: string; name_en: string | null; sku: string | null; unit: string; price_cents: number; vat_bp: number; active: boolean; archived: boolean; commission_unit_cents: number | null }>(
         tx,
-        'SELECT id, producer_id, name_bg, name_en, sku, unit, price_cents, vat_bp, active, archived FROM goods WHERE id = ANY($1)',
+        'SELECT id, producer_id, name_bg, name_en, sku, unit, price_cents, vat_bp, active, archived, commission_unit_cents FROM goods WHERE id = ANY($1)',
         [goodIds],
       );
       const byId = new Map(goods.map((g) => [g.id, g]));
@@ -254,37 +297,58 @@ export class OrderService {
       });
       if (Object.keys(fields).length) throw new AppError('good_unavailable', { fields });
 
+      // Each line is for one shop of the merchant: required when it has active shops. One order can
+      // cover several shops. The shop's alias and address are copied onto the line.
+      const shops = await many<{ id: string; alias: string; address: string; active: boolean }>(tx, 'SELECT id, alias, address, active FROM merchant_shops WHERE merchant_id = $1', [merchantId]);
+      const hasShops = shops.some((x) => x.active);
+      const shopOf = input.items.map((it, i) => {
+        const sid = it.shop_id ?? input.shop_id;
+        const shop = sid ? shops.find((x) => x.id === sid && x.active) : undefined;
+        if (sid && !shop) fields[`items.${i}.shop_id`] = 'validation.invalid';
+        else if (!shop && hasShops) fields[`items.${i}.shop_id`] = 'validation.required';
+        return shop;
+      });
+      if (Object.keys(fields).length) throw new AppError('validation_failed', { fields: { shop_id: Object.values(fields)[0]!, ...fields } });
+
       // The relationship (Приложение № 1) starts with the first order unless the admin set it up already.
       await tx.query(
         `INSERT INTO producer_merchants (producer_id, merchant_id, introduced_on, introduced_how) VALUES ($1, $2, $3, 'platform') ON CONFLICT (producer_id, merchant_id) DO NOTHING`,
         [producerId, merchantId, orderDate],
       );
-      const pair = await one<{ status: string; commission_bp: number | null; producer_commission_bp: number }>(
+      const pair = await one<PairCommissionRow>(
         tx,
-        'SELECT pm.status, pm.commission_bp, p.commission_bp AS producer_commission_bp FROM producer_merchants pm JOIN producers p ON p.id = pm.producer_id WHERE pm.producer_id = $1 AND pm.merchant_id = $2',
+        `SELECT pm.status, p.commission_type AS producer_commission_type,
+                p.commission_bp AS producer_commission_bp, p.commission_unit_cents AS producer_commission_unit_cents FROM producer_merchants pm JOIN producers p ON p.id = pm.producer_id WHERE pm.producer_id = $1 AND pm.merchant_id = $2`,
         [producerId, merchantId],
       );
-      const commissionBp = effectiveCommission(pair);
+      const commission = effectiveCommission(pair);
+      const goodsOwn = goodCommissionApplies(pair);
 
-      // The first time a good is ordered by this merchant its price is locked; afterwards only the admin changes it.
+      // The merchant's price for a good is the agreed price: the price of its last order (or what the admin set
+      // since), else the producer's list price. Only the admin can give a line another price, and that price
+      // becomes the agreed price, so the next order starts from it.
       const agreed = new Map(
         (await many<{ good_id: string; price_cents: number }>(tx, 'SELECT good_id, price_cents FROM agreed_prices WHERE merchant_id = $1 AND good_id = ANY($2)', [merchantId, goodIds])).map((a) => [
           a.good_id,
           a.price_cents,
         ]),
       );
-      for (const gid of goodIds) {
-        if (agreed.has(gid)) continue;
-        const g = byId.get(gid)!;
-        await tx.query('INSERT INTO agreed_prices (good_id, merchant_id, price_cents) VALUES ($1, $2, $3) ON CONFLICT (good_id, merchant_id) DO NOTHING', [gid, merchantId, g.price_cents]);
-        agreed.set(gid, g.price_cents);
+      const priceOf = (it: OrderCreateInput['items'][number]) => it.unit_price ?? agreed.get(it.good_id) ?? byId.get(it.good_id)!.price_cents;
+      const used = new Map(input.items.map((it) => [it.good_id, priceOf(it)]));
+      for (const [gid, cents] of used) {
+        if (agreed.get(gid) === cents) continue;
+        await tx.query(
+          `INSERT INTO agreed_prices (good_id, merchant_id, price_cents) VALUES ($1, $2, $3)
+           ON CONFLICT (good_id, merchant_id) DO UPDATE SET price_cents = EXCLUDED.price_cents, updated_at = now()`,
+          [gid, merchantId, cents],
+        );
       }
 
       const order = await one<{ id: string; number: number }>(
         tx,
         `INSERT INTO orders (producer_id, merchant_id, order_date, merchant_ref, requested_delivery_on, note, created_by, created_by_role,
-                delivery_method, delivery_note, invoice_method, invoice_note, invoice_receive_method, commission_bp)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id, number`,
+                delivery_method, delivery_note, commission_type, commission_bp, commission_unit_cents)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id, number`,
         [
           producerId,
           merchantId,
@@ -296,18 +360,19 @@ export class OrderService {
           actor.role,
           producer.delivery_method,
           producer.delivery_note,
-          producer.invoice_method,
-          producer.invoice_note,
-          merchant.invoice_method,
-          commissionBp,
+          commission.type,
+          commission.bp,
+          commission.unitCents,
         ],
       );
       let sort = 0;
-      for (const it of input.items) {
+      for (const [i, it] of input.items.entries()) {
         const g = byId.get(it.good_id)!;
+        const shop = shopOf[i];
         await tx.query(
-          `INSERT INTO order_items (order_id, good_id, name_bg, name_en, sku, unit, quantity_milli, unit_price_cents, vat_bp, sort_order) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-          [order!.id, g.id, g.name_bg, g.name_en, g.sku, g.unit, it.quantity, agreed.get(g.id)!, g.vat_bp, sort++],
+          `INSERT INTO order_items (order_id, good_id, name_bg, name_en, sku, unit, quantity_milli, unit_price_cents, vat_bp, sort_order, commission_unit_cents, shop_id, shop_alias, shop_address)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+          [order!.id, g.id, g.name_bg, g.name_en, g.sku, g.unit, it.quantity, priceOf(it), g.vat_bp, sort++, goodsOwn ? g.commission_unit_cents : null, shop?.id ?? null, shop?.alias ?? null, shop?.address ?? null],
         );
       }
       const calc = await this.recompute(tx, order!.id);
@@ -337,33 +402,52 @@ export class OrderService {
       const existingIds = new Set(existing.map((e) => e.id));
       const goodIds = [...new Set(input.items.map((i) => i.good_id))];
       const goods = new Map(
-        (await many<{ id: string; producer_id: string; name_bg: string; name_en: string | null; sku: string | null; unit: string }>(tx, 'SELECT id, producer_id, name_bg, name_en, sku, unit FROM goods WHERE id = ANY($1)', [goodIds])).map(
+        (await many<{ id: string; producer_id: string; name_bg: string; name_en: string | null; sku: string | null; unit: string; commission_unit_cents: number | null }>(
+          tx,
+          'SELECT id, producer_id, name_bg, name_en, sku, unit, commission_unit_cents FROM goods WHERE id = ANY($1)',
+          [goodIds],
+        )).map(
           (g) => [g.id, g],
         ),
       );
+      const shops = await many<{ id: string; alias: string; address: string }>(tx, 'SELECT id, alias, address FROM merchant_shops WHERE merchant_id = $1', [o.merchant_id]);
       const fields: Record<string, string> = {};
       input.items.forEach((it, i) => {
         if (it.id && !existingIds.has(it.id)) fields[`items.${i}.id`] = 'validation.invalid';
         const g = goods.get(it.good_id);
         if (!g || g.producer_id !== o.producer_id) fields[`items.${i}.good_id`] = 'validation.good_unavailable';
+        if (it.shop_id && !shops.some((x) => x.id === it.shop_id)) fields[`items.${i}.shop_id`] = 'validation.invalid';
       });
       if (Object.keys(fields).length) throw new AppError('validation_failed', { fields });
 
       const before = o.net_cents;
+      // A new line without an amount gets the good's own commission, when it applies to this merchant.
+      const pair = await one<{ status: string }>(tx, 'SELECT status FROM producer_merchants WHERE producer_id = $1 AND merchant_id = $2', [
+        o.producer_id,
+        o.merchant_id,
+      ]);
+      const goodsOwn = goodCommissionApplies(pair);
       const keep = new Set(input.items.map((i) => i.id).filter(Boolean));
       for (const e of existing) if (!keep.has(e.id)) await tx.query('DELETE FROM order_items WHERE id = $1', [e.id]);
       let sort = 0;
       for (const it of input.items) {
         const g = goods.get(it.good_id)!;
+        // Missing shop_id: the line keeps its shop; null: no shop.
+        const keepShop = it.shop_id === undefined;
+        const shop = it.shop_id ? shops.find((x) => x.id === it.shop_id) : undefined;
         if (it.id) {
           await tx.query(
-            `UPDATE order_items SET good_id=$2, name_bg=$3, name_en=$4, sku=$5, unit=$6, quantity_milli=$7, unit_price_cents=$8, vat_bp=$9, sort_order=$10 WHERE id=$1`,
-            [it.id, g.id, g.name_bg, g.name_en, g.sku, g.unit, it.quantity, it.unit_price, it.vat_percent, sort++],
+            `UPDATE order_items SET good_id=$2, name_bg=$3, name_en=$4, sku=$5, unit=$6, quantity_milli=$7, unit_price_cents=$8, vat_bp=$9, sort_order=$10,
+                    commission_unit_cents = CASE WHEN $11 THEN commission_unit_cents ELSE $12::bigint END,
+                    shop_id = CASE WHEN $13 THEN shop_id ELSE $14::uuid END, shop_alias = CASE WHEN $13 THEN shop_alias ELSE $15 END,
+                    shop_address = CASE WHEN $13 THEN shop_address ELSE $16 END WHERE id=$1`,
+            [it.id, g.id, g.name_bg, g.name_en, g.sku, g.unit, it.quantity, it.unit_price, it.vat_percent, sort++, it.commission_unit === undefined, it.commission_unit ?? null, keepShop, shop?.id ?? null, shop?.alias ?? null, shop?.address ?? null],
           );
         } else {
           await tx.query(
-            `INSERT INTO order_items (order_id, good_id, name_bg, name_en, sku, unit, quantity_milli, unit_price_cents, vat_bp, sort_order) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-            [id, g.id, g.name_bg, g.name_en, g.sku, g.unit, it.quantity, it.unit_price, it.vat_percent, sort++],
+            `INSERT INTO order_items (order_id, good_id, name_bg, name_en, sku, unit, quantity_milli, unit_price_cents, vat_bp, sort_order, commission_unit_cents, shop_id, shop_alias, shop_address)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+            [id, g.id, g.name_bg, g.name_en, g.sku, g.unit, it.quantity, it.unit_price, it.vat_percent, sort++, it.commission_unit === undefined ? (goodsOwn ? g.commission_unit_cents : null) : it.commission_unit, shop?.id ?? null, shop?.alias ?? null, shop?.address ?? null],
           );
         }
         if (input.update_agreed_prices) {
@@ -374,9 +458,23 @@ export class OrderService {
           );
         }
       }
-      await tx.query('UPDATE orders SET commission_bp = $2, returned_net_cents = $3, returned_note = $4 WHERE id = $1', [id, input.commission_percent, input.returned_net, input.returned_note]);
+      const perUnit = input.commission_type === 'per_unit';
+      await tx.query('UPDATE orders SET commission_type = $2, commission_bp = $3, commission_unit_cents = $4, returned_net_cents = $5, returned_note = $6 WHERE id = $1', [
+        id,
+        input.commission_type,
+        perUnit ? 0 : input.commission_percent,
+        perUnit ? input.commission_unit : 0,
+        input.returned_net,
+        input.returned_note,
+      ]);
       const calc = await this.recompute(tx, id);
-      await this.event(tx, id, actor, 'edited', { before, after: calc.netCents, commission_bp: input.commission_percent });
+      await this.event(tx, id, actor, 'edited', {
+        before,
+        after: calc.netCents,
+        commission_type: input.commission_type,
+        commission_bp: perUnit ? 0 : input.commission_percent,
+        commission_unit_cents: perUnit ? input.commission_unit : 0,
+      });
       await this.notifyParties(tx, actor, o, 'order_changed', { net: calc.netCents }, ['producer', 'merchant']);
     });
     return this.get(actor, id);
@@ -426,22 +524,6 @@ export class OrderService {
     return this.get(actor, id);
   }
 
-  async updateInvoice(actor: Actor, id: string, input: z.output<typeof orderInvoiceSchema>) {
-    this.requireRole(actor, 'admin', 'producer');
-    await withTx(this.deps.db, async (tx) => {
-      await this.load(tx, actor, id, true);
-      await tx.query('UPDATE orders SET invoice_number = $2, invoice_date = $3, invoice_method = $4, invoice_note = $5, updated_at = now() WHERE id = $1', [
-        id,
-        input.invoice_number,
-        input.invoice_date,
-        input.invoice_method,
-        input.invoice_note,
-      ]);
-      await this.event(tx, id, actor, 'invoice', input);
-    });
-    return this.get(actor, id);
-  }
-
   /** Returned or credited goods (art. 10): lower the commission base. */
   async updateReturn(actor: Actor, id: string, input: z.output<typeof orderReturnSchema>) {
     this.requireRole(actor, 'admin', 'producer');
@@ -456,22 +538,21 @@ export class OrderService {
   }
 
   /** The merchant paid the producer: the commission accrues (art. 8). */
+  /** The merchant's payments to the producer: the producer's business, so only the producer records them. */
   async addPayment(actor: Actor, id: string, input: z.output<typeof paymentInputSchema>) {
-    this.requireRole(actor, 'admin', 'producer');
+    this.requireRole(actor, 'producer');
     await withTx(this.deps.db, async (tx) => {
       const o = await this.load(tx, actor, id, true);
       if (o.status === 'cancelled') throw new AppError('invalid_state');
       await tx.query('INSERT INTO order_payments (order_id, amount_cents, paid_on, note, created_by) VALUES ($1, $2, $3, $4, $5)', [id, input.amount, input.paid_on, input.note, actor.userId || null]);
-      const calc = (await this.calcFor(tx, [o])).get(id)!;
-      const tranche = calc.tranches.find((t) => t.paidOn === input.paid_on);
       await this.event(tx, id, actor, 'payment', { amount: input.amount, paid_on: input.paid_on });
-      await this.notifyParties(tx, actor, o, 'payment_recorded', { amount: input.amount, paidOn: input.paid_on, commissionDueOn: tranche?.dueOn ?? null }, ['admin', 'producer']);
+      await this.notifyParties(tx, actor, o, 'payment_recorded', { amount: input.amount, paidOn: input.paid_on }, ['admin', 'producer']);
     });
     return this.get(actor, id);
   }
 
   async deletePayment(actor: Actor, id: string, paymentId: string) {
-    this.requireRole(actor, 'admin', 'producer');
+    this.requireRole(actor, 'producer');
     await withTx(this.deps.db, async (tx) => {
       await this.load(tx, actor, id, true);
       const r = await one<{ amount_cents: number; paid_on: string }>(tx, 'DELETE FROM order_payments WHERE id = $1 AND order_id = $2 RETURNING amount_cents, paid_on', [paymentId, id]);

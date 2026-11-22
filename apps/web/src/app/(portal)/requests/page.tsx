@@ -3,12 +3,13 @@
 import { REQUEST_STATUSES } from '@ba/shared';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
-import { type FormEvent, useState } from 'react';
+import { useState } from 'react';
 import { RequestBadge } from '@/components/badges';
 import { Btn, Check, Empty, ErrorNote, In, InfoNote, Loaded, Modal, PageHeader, Sel, Table, td, tdNum, Txt, useAction, useData, useFmt } from '@/components/kit';
+import { NewRequest } from '@/components/requests/new-request';
 import { useMe } from '@/components/session';
 import { api } from '@/lib/api-client';
-import type { Good, Merchant, PriceRequest, Producer } from '@/lib/types';
+import type { PriceRequest } from '@/lib/types';
 
 function Resolve({ r, onDone }: { r: PriceRequest; onDone(): void }) {
   const t = useTranslations('requests');
@@ -23,7 +24,7 @@ function Resolve({ r, onDone }: { r: PriceRequest; onDone(): void }) {
   return (
     <div className="space-y-4">
       <p className="text-[14px]">
-        {r.producer_name} → {r.merchant_name} · <strong>{r.good_name}</strong>
+        {r.producer_name} → {r.merchant_name ?? t('targetList')} · <strong>{r.good_name}</strong>
       </p>
       <p className="text-[14px] text-neutral-600">
         {t('currentPrice', { price: f.money(r.current_price_cents) })}
@@ -31,7 +32,7 @@ function Resolve({ r, onDone }: { r: PriceRequest; onDone(): void }) {
       </p>
       {r.description ? <p className="rounded-md bg-neutral-50 p-3 text-[14px]">„{r.description}“</p> : null}
       <In label={t('newPrice')} inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} error={action.field('new_price')} />
-      <Check label={t('applyOpen')} checked={apply} onChange={(e) => setApply(e.target.checked)} />
+      {r.merchant_id ? <Check label={t('applyOpen')} checked={apply} onChange={(e) => setApply(e.target.checked)} /> : <InfoNote>{t('listPriceResolveHint')}</InfoNote>}
       <Txt label={t('response')} value={response} onChange={(e) => setResponse(e.target.value)} />
       <ErrorNote>{action.error}</ErrorNote>
       <div className="flex gap-2">
@@ -43,64 +44,6 @@ function Resolve({ r, onDone }: { r: PriceRequest; onDone(): void }) {
         </Btn>
       </div>
     </div>
-  );
-}
-
-function NewRequest({ onDone }: { onDone(): void }) {
-  const t = useTranslations('requests');
-  const tc = useTranslations('common');
-  const me = useMe();
-  const f = useFmt();
-  const action = useAction();
-  const [producerId, setProducerId] = useState(me.producer_id ?? '');
-  const [merchantId, setMerchantId] = useState('');
-  const [goodId, setGoodId] = useState('');
-  const [price, setPrice] = useState('');
-  const [description, setDescription] = useState('');
-  const producers = useData<Producer[]>(me.role === 'merchant' ? '/producers' : null);
-  const merchants = useData<Merchant[]>(me.role === 'producer' ? '/merchants' : null);
-  const goods = useData<Good[]>(producerId ? `/goods?producer_id=${producerId}` : null);
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (await action.run(() => api('/requests', { method: 'POST', body: { good_id: goodId, merchant_id: me.role === 'producer' ? merchantId : undefined, proposed_price: price || null, description } }))) onDone();
-  };
-  return (
-    <form onSubmit={submit} className="space-y-4">
-      {me.role === 'merchant' ? (
-        <Sel label={t('producer')} required value={producerId} onChange={(e) => setProducerId(e.target.value)}>
-          <option value="">{tc('choose')}</option>
-          {(producers.data ?? []).map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </Sel>
-      ) : (
-        <Sel label={t('merchant')} required value={merchantId} onChange={(e) => setMerchantId(e.target.value)} error={action.field('merchant_id')}>
-          <option value="">{tc('choose')}</option>
-          {(merchants.data ?? []).map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.name}
-            </option>
-          ))}
-        </Sel>
-      )}
-      <Sel label={t('good')} required value={goodId} onChange={(e) => setGoodId(e.target.value)} error={action.field('good_id')}>
-        <option value="">{tc('choose')}</option>
-        {(goods.data ?? []).map((g) => (
-          <option key={g.id} value={g.id}>
-            {g.name_bg} ({f.money(g.my_price_cents ?? g.price_cents)})
-          </option>
-        ))}
-      </Sel>
-      <In label={t('proposed')} inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} error={action.field('proposed_price')} hint={t('proposedHint')} />
-      <Txt label={t('description')} value={description} onChange={(e) => setDescription(e.target.value)} />
-      <InfoNote>{t('onlyAdminHint')}</InfoNote>
-      <ErrorNote>{action.error}</ErrorNote>
-      <Btn tone="primary" type="submit" busy={action.busy}>
-        {t('send')}
-      </Btn>
-    </form>
   );
 }
 
@@ -161,7 +104,7 @@ export default function RequestsPage() {
                     {r.response ? <div className="max-w-xs text-[12px] text-blue-800">{t('reply')}: {r.response}</div> : null}
                   </td>
                   {me.role !== 'producer' ? <td className={td}>{r.producer_name}</td> : null}
-                  {me.role !== 'merchant' ? <td className={td}>{r.merchant_name}</td> : null}
+                  {me.role !== 'merchant' ? <td className={td}>{r.merchant_name ?? <span className="text-neutral-500">{t('targetList')}</span>}</td> : null}
                   <td className={tdNum}>{f.money(r.current_price_cents)}</td>
                   <td className={tdNum}>{f.money(r.proposed_price_cents)}</td>
                   <td className={tdNum}>{f.money(r.new_price_cents)}</td>

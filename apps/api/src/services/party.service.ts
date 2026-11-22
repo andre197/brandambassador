@@ -2,9 +2,11 @@ import {
   addDays,
   addMonths,
   CONTRACT,
+  type CommissionType,
   type MerchantInput,
   type PairInput,
   type ProducerInput,
+  type ShopInput,
   merchantProfileSchema,
   producerProfileSchema,
   sofiaToday,
@@ -26,7 +28,7 @@ export function contractTerm(signedOn: string | null, today: string): { end: str
 
 const PRODUCER_COLS = `p.id, p.name, p.eik, p.phone, p.email, p.address, p.contact_person, p.active,
   p.delivery_method, p.delivery_note, p.invoice_method, p.invoice_note, p.default_vat_bp`;
-const PRODUCER_ADMIN_COLS = `${PRODUCER_COLS}, p.notes, p.commission_bp, p.contract_number, p.contract_signed_on, p.created_at, p.updated_at`;
+const PRODUCER_ADMIN_COLS = `${PRODUCER_COLS}, p.notes, p.commission_type, p.commission_bp, p.commission_unit_cents, p.contract_number, p.contract_signed_on, p.created_at, p.updated_at`;
 const MERCHANT_COLS = `m.id, m.name, m.eik, m.phone, m.email, m.address, m.contact_person, m.active,
   m.invoice_method, m.invoice_email, m.invoice_note, m.delivery_note`;
 const MERCHANT_ADMIN_COLS = `${MERCHANT_COLS}, m.notes, m.created_at, m.updated_at`;
@@ -120,13 +122,15 @@ export class PartyService {
       input.invoice_note,
       input.contract_number,
       input.contract_signed_on,
+      input.commission_type,
+      input.commission_type === 'per_unit' ? (input.commission_unit ?? 0) : 0,
     ];
     if (id) {
       const r = await one<{ id: string }>(
         this.deps.db,
         `UPDATE producers SET name=$1, eik=$2, phone=$3, email=$4, address=$5, contact_person=$6, notes=$7, active=$8, commission_bp=$9,
                 default_vat_bp=$10, delivery_method=$11, delivery_note=$12, invoice_method=$13, invoice_note=$14, contract_number=$15,
-                contract_signed_on=$16, updated_at=now() WHERE id=$17 RETURNING id`,
+                contract_signed_on=$16, commission_type=$17, commission_unit_cents=$18, updated_at=now() WHERE id=$19 RETURNING id`,
         [...values, id],
       );
       if (!r) throw new AppError('not_found');
@@ -135,8 +139,8 @@ export class PartyService {
     const r = await one<{ id: string }>(
       this.deps.db,
       `INSERT INTO producers (name, eik, phone, email, address, contact_person, notes, active, commission_bp, default_vat_bp, delivery_method,
-              delivery_note, invoice_method, invoice_note, contract_number, contract_signed_on)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
+              delivery_note, invoice_method, invoice_note, contract_number, contract_signed_on, commission_type, commission_unit_cents)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`,
       values,
     );
     return { id: r!.id };
@@ -227,6 +231,50 @@ export class PartyService {
     if (!r.rowCount) throw new AppError('not_found');
   }
 
+  // ─── Shops of a merchant ───
+
+  /** The admin and the merchant see all its shops; producers see the active shops (to record orders). */
+  async shops(actor: Actor, merchantId: string) {
+    if (actor.role === 'merchant' && merchantId !== actor.merchantId) throw new AppError('not_found');
+    const onlyActive = actor.role === 'producer';
+    return many(
+      this.deps.db,
+      `SELECT s.id, s.merchant_id, s.alias, s.address, s.active, s.created_at, s.updated_at,
+              (SELECT count(DISTINCT oi.order_id)::int FROM order_items oi WHERE oi.shop_id = s.id) AS orders
+         FROM merchant_shops s WHERE s.merchant_id = $1${onlyActive ? ' AND s.active' : ''} ORDER BY s.alias`,
+      [merchantId],
+    );
+  }
+
+  async saveShop(merchantId: string, shopId: string | null, input: ShopInput) {
+    const m = await one(this.deps.db, 'SELECT 1 FROM merchants WHERE id = $1', [merchantId]);
+    if (!m) throw new AppError('not_found');
+    const dup = await one(this.deps.db, 'SELECT 1 FROM merchant_shops WHERE merchant_id = $1 AND lower(alias) = lower($2) AND id IS DISTINCT FROM $3', [merchantId, input.alias, shopId]);
+    if (dup) throw new AppError('validation_failed', { fields: { alias: 'validation.alias_taken' } });
+    if (shopId) {
+      const r = await one<{ id: string }>(
+        this.deps.db,
+        'UPDATE merchant_shops SET alias = $3, address = $4, active = $5, updated_at = now() WHERE id = $1 AND merchant_id = $2 RETURNING id',
+        [shopId, merchantId, input.alias, input.address, input.active],
+      );
+      if (!r) throw new AppError('not_found');
+      return { id: shopId };
+    }
+    const r = await one<{ id: string }>(this.deps.db, 'INSERT INTO merchant_shops (merchant_id, alias, address, active) VALUES ($1, $2, $3, $4) RETURNING id', [
+      merchantId,
+      input.alias,
+      input.address,
+      input.active,
+    ]);
+    return { id: r!.id };
+  }
+
+  /** Orders keep the shop's alias and address, so a shop can be deleted even if it has orders. */
+  async deleteShop(merchantId: string, shopId: string) {
+    const r = await this.deps.db.query('DELETE FROM merchant_shops WHERE id = $1 AND merchant_id = $2', [shopId, merchantId]);
+    if (!r.rowCount) throw new AppError('not_found');
+  }
+
   // ─── Own profile ───
 
   async updateOwnProfile(actor: Actor, body: unknown) {
@@ -258,7 +306,7 @@ export class PartyService {
     const col = filter.producerId ? 'pm.producer_id' : 'pm.merchant_id';
     const rows = await many<Record<string, unknown> & { last_order_on: string | null; active_period_days: number; total_net_cents: number; first_net_cents: number | null }>(
       this.deps.db,
-      `SELECT pm.*, p.name AS producer_name, p.commission_bp AS producer_commission_bp, m.name AS merchant_name, m.eik AS merchant_eik, m.address AS merchant_address,
+      `SELECT pm.*, p.name AS producer_name, m.name AS merchant_name, m.eik AS merchant_eik, m.address AS merchant_address,
               (SELECT max(o.order_date) FROM orders o WHERE o.producer_id = pm.producer_id AND o.merchant_id = pm.merchant_id AND o.status <> 'cancelled') AS last_order_on,
               (SELECT count(*)::int FROM orders o WHERE o.producer_id = pm.producer_id AND o.merchant_id = pm.merchant_id AND o.status <> 'cancelled') AS orders,
               (SELECT coalesce(sum(o.net_cents - o.returned_net_cents), 0)::bigint FROM orders o WHERE o.producer_id = pm.producer_id AND o.merchant_id = pm.merchant_id AND o.status <> 'cancelled') AS total_net_cents,
@@ -270,7 +318,6 @@ export class PartyService {
     const today = this.today();
     return rows.map((r) => ({
       ...r,
-      effective_commission_bp: effectiveCommission(r as never),
       // art. 17(3): active while the last order is within the activity period.
       active_buyer: r.last_order_on ? addDays(r.last_order_on, r.active_period_days) >= today : false,
     }));
@@ -282,10 +329,10 @@ export class PartyService {
     if (!m || !p) throw new AppError('not_found');
     const r = await one<{ id: string }>(
       this.deps.db,
-      `INSERT INTO producer_merchants (producer_id, merchant_id, status, commission_bp, introduced_on, introduced_how, territory, products_note,
+      `INSERT INTO producer_merchants (producer_id, merchant_id, status, introduced_on, introduced_how, territory, products_note,
               active_period_days, released_on, release_fee_cents, special_terms)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-       ON CONFLICT (producer_id, merchant_id) DO UPDATE SET status=EXCLUDED.status, commission_bp=EXCLUDED.commission_bp,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       ON CONFLICT (producer_id, merchant_id) DO UPDATE SET status=EXCLUDED.status,
               introduced_on=EXCLUDED.introduced_on, introduced_how=EXCLUDED.introduced_how, territory=EXCLUDED.territory,
               products_note=EXCLUDED.products_note, active_period_days=EXCLUDED.active_period_days, released_on=EXCLUDED.released_on,
               release_fee_cents=EXCLUDED.release_fee_cents, special_terms=EXCLUDED.special_terms, updated_at=now()
@@ -294,7 +341,6 @@ export class PartyService {
         producerId,
         input.merchant_id,
         input.status,
-        input.commission_percent,
         input.introduced_on,
         input.introduced_how,
         input.territory,
@@ -315,9 +361,31 @@ export class PartyService {
   }
 }
 
-/** art. 7(3): the individual rate wins; a pre-existing or released buyer carries no commission. */
-export function effectiveCommission(pair: { status: string; commission_bp: number | null; producer_commission_bp: number } | null, producerBp?: number): number {
-  if (!pair) return producerBp ?? CONTRACT.defaultCommissionBp;
-  if (pair.status === 'pre_existing' || pair.status === 'released') return 0;
-  return pair.commission_bp ?? pair.producer_commission_bp;
+export interface Commission {
+  type: CommissionType;
+  bp: number;
+  unitCents: number;
+}
+
+/** The columns effectiveCommission() needs: whether the merchant carries commission, and the producer's terms. */
+export interface PairCommissionRow {
+  status: string;
+  producer_commission_type: CommissionType;
+  producer_commission_bp: number;
+  producer_commission_unit_cents: number;
+}
+
+/** A pre-existing or released merchant carries no commission (art. 4(3), 5(4), 9); the others carry it. */
+const exempt = (pair: { status: string } | null) => pair?.status === 'pre_existing' || pair?.status === 'released';
+
+/** A good's own fixed commission applies unless the merchant carries no commission. */
+export function goodCommissionApplies(pair: { status: string } | null): boolean {
+  return !exempt(pair);
+}
+
+/** The commission of a new order: the producer's (a percent or a fixed amount per unit), or none. */
+export function effectiveCommission(pair: PairCommissionRow | null): Commission {
+  if (!pair) return { type: 'percent', bp: CONTRACT.defaultCommissionBp, unitCents: 0 };
+  if (exempt(pair)) return { type: 'percent', bp: 0, unitCents: 0 };
+  return { type: pair.producer_commission_type, bp: pair.producer_commission_bp, unitCents: pair.producer_commission_unit_cents };
 }

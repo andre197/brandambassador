@@ -4,7 +4,8 @@ import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useState } from 'react';
 import { CommissionBadge } from '@/components/badges';
-import { Btn, Card, downloadCsv, Empty, In, Loaded, PageHeader, Sel, Stat, Table, td, tdNum, useData, useFmt } from '@/components/kit';
+import { api } from '@/lib/api-client';
+import { Btn, Card, downloadCsv, Empty, In, Loaded, PageHeader, Sel, Stat, Table, td, tdNum, todayIso, useData, useFmt } from '@/components/kit';
 import { useMe } from '@/components/session';
 import type { Calc, Producer } from '@/lib/types';
 
@@ -19,7 +20,7 @@ interface Totals {
 }
 
 interface Report {
-  rows: { id: string; number: number; order_date: string; status: string; producer_name: string; merchant_name: string; invoice_number: string | null; calc: Calc }[];
+  rows: { id: string; number: number; order_date: string; status: string; producer_name: string; merchant_name: string; calc: Calc }[];
   totals: Totals;
   producers: (Totals & { producer_id: string; producer_name: string })[];
   payments: { id: string; amount_cents: number; paid_on: string; note: string | null; order_id: string; number: number; producer_name: string; merchant_name: string }[];
@@ -40,19 +41,29 @@ export default function CommissionsPage() {
   if (to) q.set('to', to);
   if (producer) q.set('producer_id', producer);
   const state = useData<Report>(`/reports/commissions?${q.toString()}`);
+  // Admin: record the rest of an order's commission as received today.
+  const [paying, setPaying] = useState<string | null>(null);
+  const markPaid = async (orderId: string, cents: number) => {
+    setPaying(orderId);
+    try {
+      await api(`/orders/${orderId}/commission-payments`, { method: 'POST', body: { amount: (cents / 100).toFixed(2), paid_on: todayIso(), note: '' } });
+      await state.reload();
+    } finally {
+      setPaying(null);
+    }
+  };
   const producers = useData<Producer[]>(admin ? '/producers' : null);
 
   const exportCsv = (r: Report) =>
     downloadCsv(`commissions-${new Date().toISOString().slice(0, 10)}.csv`, [
-      [t('order'), t('date'), t('producer'), t('merchant'), t('invoice'), t('base'), t('rate'), t('commission'), t('accrued'), t('received'), t('outstanding'), t('nextDue'), t('status')],
+      [t('order'), t('date'), t('producer'), t('merchant'), t('base'), t('rate'), t('commission'), t('accrued'), t('received'), t('outstanding'), t('nextDue'), t('status')],
       ...r.rows.map((x) => [
         x.number,
         x.order_date,
         x.producer_name,
         x.merchant_name,
-        x.invoice_number,
         (x.calc.baseNetCents / 100).toFixed(2),
-        ((x.calc.commissionBp ?? 0) / 100).toFixed(2),
+        f.commission(x.calc.commissionType, x.calc.commissionBp, x.calc.commissionUnitCents, x.calc.commissionByGoods),
         ((x.calc.commissionCents ?? 0) / 100).toFixed(2),
         ((x.calc.commissionAccruedCents ?? 0) / 100).toFixed(2),
         ((x.calc.commissionReceivedCents ?? 0) / 100).toFixed(2),
@@ -114,7 +125,7 @@ export default function CommissionsPage() {
 
             <Card title={t('byOrder')}>
               {r.rows.length ? (
-                <Table head={[t('order'), t('date'), ...(admin ? [t('producer')] : []), t('merchant'), t('base'), t('rate'), t('commission'), t('accrued'), t('received'), t('outstanding'), t('nextDue'), t('status')]}>
+                <Table head={[t('order'), t('date'), ...(admin ? [t('producer')] : []), t('merchant'), t('base'), t('rate'), t('commission'), t('accrued'), t('received'), t('outstanding'), t('nextDue'), t('status'), ...(admin ? [''] : [])]}>
                   {r.rows.map((x) => (
                     <tr key={x.id}>
                       <td className={td}>
@@ -126,7 +137,7 @@ export default function CommissionsPage() {
                       {admin ? <td className={td}>{x.producer_name}</td> : null}
                       <td className={td}>{x.merchant_name}</td>
                       <td className={tdNum}>{f.money(x.calc.baseNetCents)}</td>
-                      <td className={tdNum}>{f.pct(x.calc.commissionBp)}</td>
+                      <td className={tdNum}>{f.commission(x.calc.commissionType, x.calc.commissionBp, x.calc.commissionUnitCents, x.calc.commissionByGoods)}</td>
                       <td className={tdNum}>{f.money(x.calc.commissionCents)}</td>
                       <td className={tdNum}>{f.money(x.calc.commissionAccruedCents)}</td>
                       <td className={`${tdNum} text-green-700`}>{f.money(x.calc.commissionReceivedCents)}</td>
@@ -135,6 +146,20 @@ export default function CommissionsPage() {
                       <td className={td}>
                         <CommissionBadge status={x.calc.commissionStatus} />
                       </td>
+                      {admin ? (
+                        <td className={td}>
+                          {(x.calc.commissionCents ?? 0) > (x.calc.commissionReceivedCents ?? 0) ? (
+                            <Btn
+                              size="sm"
+                              busy={paying === x.id}
+                              onClick={() => void markPaid(x.id, (x.calc.commissionCents ?? 0) - (x.calc.commissionReceivedCents ?? 0))}
+                              title={t('markPaidHint')}
+                            >
+                              {t('markPaid')}
+                            </Btn>
+                          ) : null}
+                        </td>
+                      ) : null}
                     </tr>
                   ))}
                 </Table>

@@ -11,7 +11,7 @@ function AdminList({ rows }: { rows: Producer[] }) {
   const t = useTranslations('producers');
   const tc = useTranslations('common');
   const f = useFmt();
-  const list = useListFilter(rows, (p) => `${p.name} ${p.eik} ${p.email}`);
+  const list = useListFilter(rows, (p) => `${p.name} ${p.eik} ${p.email ?? ''}`);
   const soon = (iso?: string) => (iso ? new Date(iso).getTime() - Date.now() < 45 * 86_400_000 : false);
   return (
     <>
@@ -27,7 +27,7 @@ function AdminList({ rows }: { rows: Producer[] }) {
                   </Link>
                   <div className="text-[12px] text-neutral-500">ЕИК {p.eik}</div>
                 </td>
-                <td className={tdNum}>{f.pct(p.commission_bp)}</td>
+                <td className={tdNum}>{f.commission(p.commission_type, p.commission_bp, p.commission_unit_cents)}</td>
                 <td className={tdNum}>{p.goods_count}</td>
                 <td className={tdNum}>{p.merchants_count}</td>
                 <td className={tdNum}>{f.money(p.stats?.net_cents)}</td>
@@ -81,7 +81,7 @@ function MerchantList({ rows }: { rows: Producer[] }) {
                   </Link>
                   <p className="text-[13px] text-neutral-500">{p.address}</p>
                   <p className="mt-1 text-[13px] text-neutral-700">
-                    {p.phone} · {p.email}
+                    {[p.phone, p.email].filter(Boolean).join(' · ')}
                   </p>
                 </div>
                 <Link href={`/orders/new?producer_id=${p.id}`}>

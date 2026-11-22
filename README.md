@@ -41,12 +41,12 @@ Logins: **admin / admin** (created automatically in development only). After `se
 
 | | Admin | Producer | Merchant |
 |---|---|---|---|
-| Producers and merchants (name, ЕИК, phone, email, address) | add, change, delete | own profile (contact, delivery, invoicing) | own profile (contact, how it receives invoices) |
+| Producers and merchants (name, ЕИК, phone, email (optional), address); a merchant can have several shops, each with an alias and address | add, change, delete | own profile (contact, delivery, invoicing) | own profile (contact, how it receives invoices) |
 | Logins | creates them (with a password, or by sending an email invite) | - | - |
 | Goods | all | add, change, delete its own | sees active goods at its own price |
-| Orders | all, and can create one for anyone | records orders with its merchants, confirms, delivers, invoices, records the merchant's payments | places orders with any producer, cancels while the order is new |
+| Orders | all, and can create one for anyone | records orders with its merchants, confirms, delivers, invoices, records the merchant's payments (only the producer) | places orders with any producer, cancels while the order is new |
 | Price in an order | **only the admin** changes it (on the order, or as the agreed price) | asks for a change (with a description) | asks for a change (with a description) |
-| Commission | sets the rate (default 10%, per producer, per buyer, per order) and records what was received | sees what it owes and the due dates | never sees it |
+| Commission | sets the rate: a percent (default 10%) or a fixed amount per unit, per producer, per good, per order and records what was received | sees what it owes and the due dates | never sees it |
 | Reminders "place an order by…" | creates them; the merchant is notified now, N days before and on the day | - | sees them, marks them done; an order closes them |
 | Notifications (in-app and email) | new orders, payments, price requests, contract renewal | new orders, changes, request decisions, commission received | orders, reminders, request decisions |
 
@@ -67,4 +67,6 @@ Logins: **admin / admin** (created automatically in development only). After `se
 
 ## Production
 
-Set real environment variables (see `.env.example`: `SITE_URL` with https, `IP_HASH_SECRET`, SMTP, `ADMIN_LOGIN`/`ADMIN_PASSWORD` or `create-admin`). Then run `npm ci && npm run build && npm run migrate:prod` and start the three processes behind a reverse proxy. The proxy sends `/api/*` to port 4300 and everything else to 3300. If you use cron instead of the worker, run `node apps/api/dist/src/cli/run-jobs.js` every minute.
+**Shared hosting (cPanel):** build on your computer with `npm run build && npm run bundle:cpanel` and upload `deploy/brandambassador-cpanel.tar.gz`. Step by step: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+**A VPS:** set real environment variables (see `.env.example`: `SITE_URL` with https, `IP_HASH_SECRET`, SMTP, `ADMIN_LOGIN`/`ADMIN_PASSWORD` or `create-admin`). Then run `npm ci && npm run build && npm run migrate:prod` and start the three processes behind a reverse proxy. The proxy sends `/api/*` to port 4300 and everything else to 3300. If you use cron instead of the worker, run `node apps/api/dist/src/cli/run-jobs.js` every minute.

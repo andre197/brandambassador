@@ -7,6 +7,7 @@ import { Btn, Card, ErrorNote, Facts, In, Loaded, OkNote, PageHeader, Sel, Txt, 
 import { PasswordCard } from '@/components/password-card';
 import { useMe } from '@/components/session';
 import { api } from '@/lib/api-client';
+import { ShopsCard } from '@/components/parties/shops-card';
 import type { Merchant, Producer } from '@/lib/types';
 
 const str = (v: unknown) => (v === null || v === undefined ? '' : String(v));
@@ -51,7 +52,7 @@ function ProfileForm({ party }: { party: Producer & Merchant }) {
             [tp('email'), party.email],
             ...(producer
               ? ([
-                  [tp('commissionPercent'), f.pct(party.commission_bp)],
+                  [tp('commissionRate'), f.commission(party.commission_type, party.commission_bp, party.commission_unit_cents)],
                   [tp('contractNumber'), party.contract_number],
                   [t('contractTerm'), party.contract ? t('contractLine', { end: f.date(party.contract.end), notice: f.date(party.contract.notice) }) : '-'],
                 ] as [string, string][])
@@ -124,7 +125,10 @@ export default function ProfilePage() {
     <>
       <PageHeader title={t('title')}>{me.email}</PageHeader>
       <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
-        <div>{me.role === 'admin' ? null : <Loaded state={state}>{(p) => <ProfileForm party={p} />}</Loaded>}</div>
+        <div className="space-y-6">
+          {me.role === 'admin' ? null : <Loaded state={state}>{(p) => <ProfileForm party={p} />}</Loaded>}
+          {me.role === 'merchant' && me.merchant_id ? <ShopsCard merchantId={me.merchant_id} /> : null}
+        </div>
         <PasswordCard />
       </div>
     </>

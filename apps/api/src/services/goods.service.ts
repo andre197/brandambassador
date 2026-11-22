@@ -4,7 +4,9 @@ import type { Deps } from '../deps.js';
 import { AppError } from '../lib/errors.js';
 import type { Actor } from '../types.js';
 
-const COLS = 'g.id, g.producer_id, g.name_bg, g.name_en, g.sku, g.unit, g.price_cents, g.vat_bp, g.description, g.active, g.created_at, g.updated_at';
+const COLS = 'g.id, g.producer_id, g.name_bg, g.name_en, g.sku, g.unit, g.price_cents, g.price_gross_cents, g.vat_bp, g.description, g.active, g.created_at, g.updated_at';
+/** The commission is between the producer and me: never sent to merchants. */
+const COMMISSION_COLS = 'g.commission_unit_cents';
 
 export class GoodsService {
   constructor(private readonly deps: Pick<Deps, 'db'>) {}
@@ -20,7 +22,7 @@ export class GoodsService {
     if (actor.role === 'merchant') {
       return many(
         this.deps.db,
-        `SELECT ${COLS}, coalesce(ap.price_cents, g.price_cents) AS my_price_cents, ap.id IS NOT NULL AS price_locked
+        `SELECT ${COLS}, coalesce(ap.price_cents, g.price_cents) AS my_price_cents, coalesce(ap.price_gross_cents, g.price_gross_cents) AS my_price_gross_cents, ap.id IS NOT NULL AS price_locked
            FROM goods g JOIN producers p ON p.id = g.producer_id AND p.active
            LEFT JOIN agreed_prices ap ON ap.good_id = g.id AND ap.merchant_id = $2
           WHERE g.producer_id = $1 AND g.active AND NOT g.archived ORDER BY g.name_bg`,
@@ -30,8 +32,10 @@ export class GoodsService {
     const where = producerId ? 'g.producer_id = $1 AND NOT g.archived' : 'NOT g.archived';
     return many(
       this.deps.db,
-      `SELECT ${COLS}, p.name AS producer_name,
+      `SELECT ${COLS}, ${COMMISSION_COLS}, p.name AS producer_name,
               (SELECT count(*)::int FROM agreed_prices ap WHERE ap.good_id = g.id) AS merchants_count,
+              (EXISTS (SELECT 1 FROM agreed_prices ap WHERE ap.good_id = g.id) OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.good_id = g.id)) AS price_linked,
+              (SELECT r.proposed_price_cents FROM price_requests r WHERE r.good_id = g.id AND r.merchant_id IS NULL AND r.status = 'pending' ORDER BY r.created_at DESC LIMIT 1) AS pending_price_cents,
               (SELECT coalesce(sum(oi.quantity_milli), 0)::bigint FROM order_items oi JOIN orders o ON o.id = oi.order_id
                  WHERE oi.good_id = g.id AND o.status <> 'cancelled') AS sold_milli
          FROM goods g JOIN producers p ON p.id = g.producer_id
@@ -47,16 +51,22 @@ export class GoodsService {
     return g;
   }
 
+  /** Only the admin sets a good's own commission. */
+  private checkCommission(actor: Actor, input: GoodInput) {
+    if (input.commission_unit !== undefined && actor.role !== 'admin') throw new AppError('forbidden');
+  }
+
   async create(actor: Actor, producerId: string | undefined, input: GoodInput) {
     const pid = actor.role === 'producer' ? actor.producerId! : producerId;
     if (actor.role === 'merchant') throw new AppError('forbidden');
+    this.checkCommission(actor, input);
     if (!pid || !(await one(this.deps.db, 'SELECT 1 FROM producers WHERE id = $1', [pid]))) {
       throw new AppError('validation_failed', { fields: { producer_id: 'validation.required' } });
     }
     const r = await one<{ id: string }>(
       this.deps.db,
-      `INSERT INTO goods (producer_id, name_bg, name_en, sku, unit, price_cents, vat_bp, description, active) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
-      [pid, input.name_bg, input.name_en, input.sku, input.unit, input.price, input.vat_percent, input.description, input.active],
+      `INSERT INTO goods (producer_id, name_bg, name_en, sku, unit, price_cents, vat_bp, description, active, commission_unit_cents) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+      [pid, input.name_bg, input.name_en, input.sku, input.unit, input.price, input.vat_percent, input.description, input.active, input.commission_unit ?? null],
     );
     return { id: r!.id };
   }
@@ -64,9 +74,23 @@ export class GoodsService {
   /** Changes the list price only: prices already agreed with merchants stay as they are (only the admin changes those). */
   async update(actor: Actor, id: string, input: GoodInput) {
     await this.own(actor, id);
+    this.checkCommission(actor, input);
+    // Once a good has links with merchants (an agreed price or an order), only the admin changes its
+    // price; the producer asks for it with a price request.
+    if (actor.role === 'producer') {
+      const cur = await one<{ price_cents: number; linked: boolean }>(
+        this.deps.db,
+        `SELECT price_cents, EXISTS (SELECT 1 FROM agreed_prices WHERE good_id = $1) OR EXISTS (SELECT 1 FROM order_items WHERE good_id = $1) AS linked FROM goods WHERE id = $1`,
+        [id],
+      );
+      if (cur!.linked && Number(cur!.price_cents) !== input.price) throw new AppError('validation_failed', { fields: { price: 'validation.price_locked' } });
+    }
+    // Missing commission_unit: the good keeps its own commission.
+    const keep = input.commission_unit === undefined;
     await this.deps.db.query(
-      `UPDATE goods SET name_bg=$2, name_en=$3, sku=$4, unit=$5, price_cents=$6, vat_bp=$7, description=$8, active=$9, updated_at=now() WHERE id=$1`,
-      [id, input.name_bg, input.name_en, input.sku, input.unit, input.price, input.vat_percent, input.description, input.active],
+      `UPDATE goods SET name_bg=$2, name_en=$3, sku=$4, unit=$5, price_cents=$6, vat_bp=$7, description=$8, active=$9,
+              commission_unit_cents = CASE WHEN $10 THEN commission_unit_cents ELSE $11::bigint END, updated_at=now() WHERE id=$1`,
+      [id, input.name_bg, input.name_en, input.sku, input.unit, input.price, input.vat_percent, input.description, input.active, keep, input.commission_unit ?? null],
     );
     return { id };
   }
@@ -84,7 +108,14 @@ export class GoodsService {
   }
 
   /** Locked prices per merchant: where a producer's goods are traded and at what price. */
+  /** Agreed prices; a merchant gets only its own agreed prices, without the producer's current (wanted) price. */
   async agreedPrices(actor: Actor, filter: { producerId?: string; merchantId?: string }) {
+    const rows = await this.agreedPriceRows(actor, filter);
+    if (actor.role !== 'merchant') return rows;
+    return rows.map(({ list_price_cents: _l, list_price_gross_cents: _g, ...rest }) => rest);
+  }
+
+  private async agreedPriceRows(actor: Actor, filter: { producerId?: string; merchantId?: string }) {
     if (actor.role === 'producer') filter = { ...filter, producerId: actor.producerId! };
     if (actor.role === 'merchant') filter = { ...filter, merchantId: actor.merchantId! };
     const where: string[] = [];
@@ -93,7 +124,7 @@ export class GoodsService {
     if (filter.merchantId) where.push(`ap.merchant_id = $${params.push(filter.merchantId)}`);
     return many(
       this.deps.db,
-      `SELECT ap.id, ap.good_id, ap.merchant_id, ap.price_cents, ap.updated_at, g.name_bg, g.name_en, g.unit, g.price_cents AS list_price_cents,
+      `SELECT ap.id, ap.good_id, ap.merchant_id, ap.price_cents, ap.price_gross_cents, ap.updated_at, g.name_bg, g.name_en, g.unit, g.price_cents AS list_price_cents, g.price_gross_cents AS list_price_gross_cents,
               g.vat_bp, g.producer_id, p.name AS producer_name, m.name AS merchant_name,
               (SELECT coalesce(sum(oi.quantity_milli), 0)::bigint FROM order_items oi JOIN orders o ON o.id = oi.order_id
                  WHERE oi.good_id = g.id AND o.merchant_id = ap.merchant_id AND o.status <> 'cancelled') AS quantity_milli,

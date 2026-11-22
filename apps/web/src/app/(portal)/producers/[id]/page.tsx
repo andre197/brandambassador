@@ -6,6 +6,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { type FormEvent, useState } from 'react';
 import { ActiveBadge } from '@/components/badges';
 import { AgreedPrices } from '@/components/goods/agreed-prices';
+import { ProducerPrices } from '@/components/goods/producer-prices';
 import { GoodsManager } from '@/components/goods/goods-manager';
 import { Btn, Card, ConfirmBtn, Empty, ErrorNote, Facts, In, Loaded, Modal, PageHeader, Table, Tabs, td, tdNum, Txt, useAction, useData, useFmt } from '@/components/kit';
 import { OrderTable } from '@/components/orders/order-table';
@@ -52,7 +53,7 @@ function AdminProducer({ p, reload }: { p: Producer; reload(): void }) {
           </>
         }
       >
-        ЕИК {p.eik} · {t('commission')} {f.pct(p.commission_bp)}
+        ЕИК {p.eik} · {t('commission')} {f.commission(p.commission_type, p.commission_bp, p.commission_unit_cents)}
         {p.contract ? ` · ${t('contractLine', { end: f.date(p.contract.end), notice: f.date(p.contract.notice) })}` : ''}
       </PageHeader>
       {remove.error ? (
@@ -68,7 +69,7 @@ function AdminProducer({ p, reload }: { p: Producer; reload(): void }) {
       {tab === 'details' ? <ProducerForm initial={p} onSaved={reload} /> : null}
       {tab === 'buyers' ? <PairsCard producerId={p.id} /> : null}
       {tab === 'goods' ? <GoodsManager producerId={p.id} /> : null}
-      {tab === 'prices' ? <AgreedPrices producerId={p.id} /> : null}
+      {tab === 'prices' ? <ProducerPrices producerId={p.id} /> : null}
       {tab === 'trade' ? <TradeReport producerId={p.id} /> : null}
       {tab === 'orders' ? <Loaded state={orders}>{(rows) => <OrderTable rows={rows} />}</Loaded> : null}
       {tab === 'users' ? <UsersCard producerId={p.id} /> : null}
@@ -136,7 +137,7 @@ function MerchantView({ p }: { p: Producer }) {
             <Loaded state={goods}>
               {(rows) =>
                 rows.length ? (
-                  <Table head={[tg('name'), tg('myPrice'), tg('vat'), '']}>
+                  <Table head={[tg('name'), tg('myPrice'), tg('vat'), tg('myPriceGross'), '']}>
                     {rows.map((g) => (
                       <tr key={g.id}>
                         <td className={td}>
@@ -148,6 +149,7 @@ function MerchantView({ p }: { p: Producer }) {
                           {g.price_locked ? <div className="text-[11px] text-gold">{tg('locked')}</div> : null}
                         </td>
                         <td className={tdNum}>{f.pct(g.vat_bp)}</td>
+                        <td className={tdNum}>{f.money(g.my_price_gross_cents)}</td>
                         <td className={`${td} text-right`}>
                           <Ask good={g} />
                         </td>
@@ -160,6 +162,7 @@ function MerchantView({ p }: { p: Producer }) {
               }
             </Loaded>
           </Card>
+          <AgreedPrices producerId={p.id} />
           <Card title={t('myOrdersTitle')}>
             <Loaded state={orders}>{(rows) => <OrderTable rows={rows} compact />}</Loaded>
           </Card>

@@ -20,7 +20,6 @@ function PairEditor({ producerId, pair, merchants, onDone, onClose }: { producer
   const [form, setForm] = useState({
     merchant_id: pair?.merchant_id ?? '',
     status: pair?.status ?? 'attracted',
-    commission_percent: pair?.commission_bp !== null && pair?.commission_bp !== undefined ? String(pair.commission_bp / 100) : '',
     introduced_on: str(pair?.introduced_on),
     introduced_how: str(pair?.introduced_how),
     territory: str(pair?.territory),
@@ -33,7 +32,9 @@ function PairEditor({ producerId, pair, merchants, onDone, onClose }: { producer
   const set = (k: keyof typeof form, v: string) => setForm({ ...form, [k]: v });
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const body = { ...form, commission_percent: form.commission_percent === '' ? null : form.commission_percent, release_fee: form.release_fee === '' ? null : form.release_fee };
+    const body = {
+      ...form,
+      release_fee: form.release_fee === '' ? null : form.release_fee };
     if (await action.run(() => api(`/producers/${producerId}/pairs`, { method: 'PUT', body }))) onDone();
   };
   return (
@@ -54,7 +55,6 @@ function PairEditor({ producerId, pair, merchants, onDone, onClose }: { producer
             </option>
           ))}
         </Sel>
-        <In label={t('commission')} inputMode="decimal" value={form.commission_percent} onChange={(e) => set('commission_percent', e.target.value)} hint={t('commissionHint')} error={action.field('commission_percent')} />
         <In type="date" label={t('introducedOn')} value={form.introduced_on} onChange={(e) => set('introduced_on', e.target.value)} />
         <In label={t('introducedHow')} value={form.introduced_how} onChange={(e) => set('introduced_how', e.target.value)} />
         <In label={t('territory')} value={form.territory} onChange={(e) => set('territory', e.target.value)} />
@@ -112,7 +112,7 @@ export function PairsCard({ producerId }: { producerId: string }) {
     >
       <p className="mb-3 text-[13px] text-neutral-500">{t('hint')}</p>
       {state.data?.length ? (
-        <Table head={[t('merchant'), t('status'), t('commission'), t('orders'), t('total'), t('lastOrder'), t('active'), ...(admin ? [tc('actions')] : [])]}>
+        <Table head={[t('merchant'), t('status'), t('orders'), t('total'), t('lastOrder'), t('active'), ...(admin ? [tc('actions')] : [])]}>
           {state.data.map((p) => (
             <tr key={p.id}>
               <td className={td}>
@@ -127,10 +127,6 @@ export function PairsCard({ producerId }: { producerId: string }) {
               </td>
               <td className={td}>
                 <Badge tone={p.status === 'attracted' ? 'blue' : 'gray'}>{tp(p.status)}</Badge>
-              </td>
-              <td className={tdNum}>
-                {f.pct(p.effective_commission_bp)}
-                {p.commission_bp !== null && p.status === 'attracted' ? <div className="text-[11px] text-gold">{t('individual')}</div> : null}
               </td>
               <td className={tdNum}>{p.orders}</td>
               <td className={tdNum}>{f.money(p.total_net_cents)}</td>

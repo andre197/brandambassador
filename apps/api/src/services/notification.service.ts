@@ -76,7 +76,7 @@ export class NotificationService {
       for (const u of await many<{ email: string; locale: Locale }>(this.deps.db, `SELECT email, locale FROM users WHERE ${col} = $1 AND active`, [id])) out.set(u.email, u.locale);
       if (!out.size) {
         const table = n.audience === 'producer' ? 'producers' : 'merchants';
-        const party = await one<{ email: string }>(this.deps.db, `SELECT email FROM ${table} WHERE id = $1`, [id]);
+        const party = await one<{ email: string | null }>(this.deps.db, `SELECT email FROM ${table} WHERE id = $1`, [id]);
         if (party?.email) out.set(party.email, 'bg');
       }
     }

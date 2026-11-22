@@ -21,7 +21,8 @@
     "search": "Search…",
     "actions": "Actions",
     "from": "From",
-    "to": "To"
+    "to": "To",
+    "export": "Export"
   },
   "units": {
     "pcs": "pcs",
@@ -29,7 +30,8 @@
     "l": "l",
     "box": "box",
     "pack": "pack",
-    "pallet": "pallet"
+    "pallet": "pallet",
+    "perUnit": "unit"
   },
   "nav": {
     "dashboard": "Dashboard",
@@ -66,7 +68,7 @@
   },
   "commissionStatus": {
     "none": "No commission",
-    "awaiting_payment": "Awaiting merchant payment",
+    "awaiting_payment": "Waiting for delivery",
     "due": "Due",
     "overdue": "Overdue",
     "settled": "Paid"
@@ -82,9 +84,25 @@
     "cancelled": "Cancelled"
   },
   "pairStatus": {
-    "attracted": "Attracted buyer",
+    "attracted": "Attracted merchant",
     "pre_existing": "Existing client",
     "released": "Released (art. 9)"
+  },
+  "commissionTerms": {
+    "type": "Commission type",
+    "types": {
+      "percent": "Percent of the net value",
+      "per_unit": "Fixed amount per unit"
+    },
+    "unitAmount": "Commission per unit, €",
+    "unitHint": "For each unit sold (piece, kg, l...), excl. VAT.",
+    "goodUnitAmount": "Own commission per unit, €",
+    "goodUnitHint": "Empty: the producer's commission. Does not apply to merchants with their own terms.",
+    "goodColumn": "Commission",
+    "fromProducer": "producer's",
+    "lineUnitAmount": "Comm./unit",
+    "lineUnitHint": "Commission per unit for a line (from the good). Empty: the order's commission.",
+    "byGoods": "by goods"
   },
   "deliveryMethods": {
     "own_transport": "Own transport",
@@ -168,7 +186,7 @@
     "status": "Status",
     "payment": "Payment",
     "commission": "Commission",
-    "searchHint": "Number, name, invoice number…",
+    "searchHint": "Number, name, shop…",
     "allStatuses": "All statuses",
     "allProducers": "All producers",
     "allMerchants": "All merchants",
@@ -182,11 +200,14 @@
     "chooseProducer": "Choose a producer to see its goods.",
     "good": "Good",
     "unitPrice": "Price excl. VAT",
+    "unitPriceGross": "Price incl. VAT",
     "vat": "VAT",
     "quantity": "Quantity",
     "lineNet": "Total excl. VAT",
+    "lineGross": "Total incl. VAT",
     "lockedPrice": "agreed price",
     "priceLockHint": "Once a good is in an order, its price for this merchant is locked. Only the admin can change it - ask for a change if needed.",
+    "adminPriceHint": "Each price defaults to the price excl. VAT from the last order with this merchant, or the producer's price if there is none. A price you change here becomes the merchant's agreed price for the next orders.",
     "noGoods": "The producer has no active goods.",
     "note": "Note",
     "summary": "Summary",
@@ -205,6 +226,7 @@
     "editLines": "Change lines and prices",
     "addLine": "Add line",
     "commissionPercent": "Commission, %",
+    "commissionRate": "Commission",
     "returnedNet": "Returned goods excl. VAT, €",
     "returnedNote": "Note on the return",
     "updateAgreed": "Keep the new prices as the agreed prices for this merchant",
@@ -216,7 +238,7 @@
     "outstanding": "To receive",
     "overdue": "Overdue",
     "nextDue": "Due date",
-    "commissionRule": "The commission is a percentage of the net value excl. VAT. It accrues when the merchant pays the producer (proportionally for partial payments) and is due within 5 working days after that (contract art. 7-8).",
+    "commissionRule": "The commission is a percent of the value excl. VAT, or a fixed amount per unit. It is owed in full once the order is delivered, whether or not the merchant has paid the producer, and is due within 5 working days after the delivery.",
     "delivery": "Delivery",
     "deliveryMethod": "Delivery method",
     "deliveryNote": "Delivery details",
@@ -224,14 +246,8 @@
     "deliveredOn": "Delivered on",
     "deliveredHint": "A date marks the order delivered.",
     "receiving": "Receiving at the merchant",
-    "invoice": "Invoice",
-    "invoiceNumber": "Invoice number",
-    "invoiceDate": "Invoice date",
-    "invoiceSentVia": "Sent (by the producer)",
-    "invoiceReceivedVia": "Received (by the merchant)",
-    "invoiceNote": "Invoice note",
     "merchantPayments": "Payments from the merchant",
-    "merchantPaymentsHint": "What the merchant paid the producer. The commission accrues on these.",
+    "merchantPaymentsHint": "What the merchant paid the producer. Recorded by the producer; it does not change the commission.",
     "commissionPayments": "Commission received",
     "commissionPaymentsHint": "What the producer paid the intermediary for this order.",
     "amount": "Amount, €",
@@ -242,7 +258,29 @@
     "name": "Name",
     "phone": "Phone",
     "email": "Email",
-    "address": "Address"
+    "address": "Address",
+    "shop": "Shop",
+    "eik": "ЕИК",
+    "shopAlias": "Alias",
+    "amountNet": "Amount excl. VAT",
+    "amountGross": "Amount incl. VAT",
+    "total": "Total",
+    "views": {
+      "orders": "Orders",
+      "lines": "Extended view"
+    },
+    "noShop": "No shop (merchant's address)",
+    "shops": "Shops",
+    "chooseMerchant": "Choose a merchant to add goods.",
+    "addShop": "Add shop",
+    "addShopHint": "Press \"Add shop\", pick the shop, then add its goods. One order can cover several shops of the company.",
+    "chooseShopFirst": "Choose the shop first.",
+    "removeShop": "Remove this shop and its goods",
+    "removeLine": "Remove this line",
+    "wantedPrice": "Wanted price",
+    "wantedPriceHint": "The producer's current price of the good. For information only.",
+    "markCommissionPaid": "Mark the commission as received ({amount})",
+    "markCommissionPaidHint": "Records the rest of the commission as received today. For a part payment, enter the amount below."
   },
   "events": {
     "title": "History",
@@ -289,7 +327,12 @@
     "status": "Status",
     "reply": "Reply",
     "resolve": "Decide",
-    "resolveTitle": "Request #{number}"
+    "resolveTitle": "Request #{number}",
+    "target": "Which price",
+    "targetList": "The good's price (merchants without orders)",
+    "targetMerchant": "Agreed price for {merchant}",
+    "listPriceHint": "When the admin approves, only the good's price changes: agreed prices with merchants and existing orders stay as they are.",
+    "listPriceResolveHint": "Approving changes only the good's price. Agreed prices with merchants and existing orders do not change."
   },
   "parties": {
     "details": "Details",
@@ -302,6 +345,7 @@
     "address": "Address",
     "terms": "Contract and commission",
     "commissionPercent": "Commission, %",
+    "commissionRate": "Commission",
     "commissionHint": "Empty = the default from the settings (10%). Applies to new orders.",
     "defaultVat": "Default VAT for goods, %",
     "contractNumber": "Contract number",
@@ -342,23 +386,20 @@
     "add": "Add"
   },
   "pairs": {
-    "title": "Attracted buyers (Annex No. 1)",
+    "title": "Attracted merchants (Annex No. 1)",
     "producersTitle": "Producers",
     "hint": "The producer’s merchants and the special terms for each. An individual commission takes precedence over the standard one (art. 7(3)).",
-    "add": "Add buyer",
-    "edit": "Terms for the buyer",
+    "add": "Add merchant",
+    "edit": "Terms for the merchant",
     "merchant": "Merchant",
     "producer": "Producer",
     "status": "Status",
-    "statusHint": "An existing client of the producer (art. 5(4)) or a buyer released for a fee (art. 9) - new orders carry no commission.",
-    "commission": "Commission, %",
-    "commissionHint": "Empty = the producer’s commission.",
-    "individual": "individual",
+    "statusHint": "An existing client of the producer (art. 5(4)) or a merchant released for a fee (art. 9) - new orders carry no commission.",
     "introducedOn": "Introduced on",
     "introducedHow": "How introduced",
     "territory": "Territory",
     "activePeriod": "Activity period, days",
-    "activePeriodHint": "The buyer is active with an order within this period (art. 17(3)-(4)). Standard 30.",
+    "activePeriodHint": "The merchant is active with an order within this period (art. 17(3)-(4)). Standard 30.",
     "products": "Products / brands",
     "releasedOn": "Released on",
     "releaseFee": "Release fee, €",
@@ -388,6 +429,8 @@
     "myPrice": "Your price excl. VAT",
     "locked": "agreed",
     "vat": "VAT, %",
+    "myPriceGross": "Your price incl. VAT",
+    "priceGross": "Price incl. VAT, €",
     "description": "Description",
     "activeLabel": "Active (merchants can order it)",
     "lockedNote": "This good has an agreed price with {count, plural, one {# merchant} other {# merchants}}. A new price will not change theirs.",
@@ -395,7 +438,12 @@
     "sold": "Sold",
     "archived": "The good was ordered before, so it is hidden (archived) instead of deleted.",
     "deleted": "The good is deleted.",
-    "priceRule": "The price in an order is never changed by the producer or the merchant - only by the admin."
+    "priceRule": "The price in an order is never changed by the producer or the merchant - only by the admin.",
+    "priceLockedHint": "The good has links with merchants: only the admin can change its price.",
+    "askPrice": "Ask for a new price",
+    "askPriceHint": "To change the price, send a request to the admin. Agreed prices and existing orders will not change.",
+    "pendingPrice": "Waiting for the admin to approve the new price {price}.",
+    "requestSent": "The request was sent to the admin."
   },
   "prices": {
     "title": "Agreed prices",
@@ -404,11 +452,25 @@
     "producer": "Producer",
     "good": "Good",
     "price": "Agreed price excl. VAT, €",
-    "listPrice": "List price",
+    "priceGross": "Agreed price incl. VAT, €",
+    "listPrice": "Wanted price",
+    "listPriceGross": "Wanted price incl. VAT",
     "quantity": "Quantity",
     "lastOrder": "Last order",
     "change": "Change",
-    "applyOpen": "Also change it in undelivered orders"
+    "applyOpen": "Also change it in undelivered orders",
+    "merchantHint": "Your agreed price for each good you have ordered. Only the admin changes it; ask for a change if needed."
+  },
+  "producerPrices": {
+    "title": "Producer's prices",
+    "hint": "The prices of the goods: set by the producer, or approved by the admin on the producer's request. New merchants get these; prices agreed with a merchant are on that merchant's page.",
+    "good": "Good",
+    "price": "Price excl. VAT",
+    "vat": "VAT",
+    "priceGross": "Price incl. VAT",
+    "pending": "Requested new price",
+    "changed": "Last change",
+    "inactive": "inactive"
   },
   "trade": {
     "merchants": "Merchants",
@@ -418,17 +480,21 @@
     "contractFigures": "Contract figures",
     "termination": "Early termination penalty (art. 17): {amount}",
     "concealment": "Concealment penalty (art. 16): {amount}",
-    "contractNote": "Indicative: 10% of the turnover with each active buyer (min. 500 €), and 10% of the last 12 months (min. 1000 €) respectively.",
-    "active": "Active buyer",
+    "contractNote": "Indicative: 10% of the turnover with each active merchant (min. 500 €), and 10% of the last 12 months (min. 1000 €) respectively.",
+    "active": "Active merchant",
     "inactive": "Inactive",
     "lastOrder": "last order {date}",
     "good": "Good",
     "price": "Price",
+    "priceGross": "Price incl. VAT",
     "quantity": "Quantity",
     "net": "Total excl. VAT",
+    "gross": "Total incl. VAT",
     "orders": "Orders",
     "lastOrderCol": "Last",
-    "none": "No orders yet."
+    "none": "No orders yet.",
+    "goodsSold": "Goods sold, by merchant",
+    "totalAll": "Total"
   },
   "producers": {
     "title": "Producers",
@@ -459,7 +525,7 @@
     "invoices": "Invoices",
     "tabs": {
       "details": "Details",
-      "buyers": "Buyers",
+      "buyers": "Merchants",
       "goods": "Goods",
       "prices": "Prices",
       "trade": "Where it sells",
@@ -490,12 +556,25 @@
     "receiving": "Receiving",
     "tabs": {
       "details": "Details",
+      "shops": "Shops",
       "producers": "Producers",
       "prices": "Prices",
       "reminders": "Reminders",
       "orders": "Orders",
       "users": "Access"
     }
+  },
+  "shops": {
+    "title": "Shops",
+    "hint": "The shops of this company, each with its own alias and address. Every order is for one shop.",
+    "add": "Add shop",
+    "edit": "Edit shop",
+    "alias": "Alias",
+    "aliasHint": "A short name, e.g. \"Lozenets\" or \"Store 2\".",
+    "address": "Address",
+    "activeLabel": "Active (orders can be placed for it)",
+    "orders": "Orders",
+    "none": "No shops. Orders go to the merchant's address."
   },
   "reminders": {
     "title": "Order reminders",
@@ -543,7 +622,6 @@
     "orders": "Orders",
     "date": "Date",
     "merchant": "Merchant",
-    "invoice": "Invoice",
     "base": "Base",
     "rate": "%",
     "accrued": "Accrued",
@@ -551,23 +629,58 @@
     "status": "Status",
     "amount": "Amount",
     "note": "Note",
-    "rules": "The commission is a percentage of the net delivery value excl. VAT (10% by default; an individual rate takes precedence). It accrues when the merchant pays, in proportion to what was paid, and is due within 5 working days (art. 7-8). Working days take the official Bulgarian holidays into account."
+    "rules": "The commission is a percentage of the net delivery value excl. VAT (10% by default; an individual rate takes precedence). It accrues when the merchant pays, in proportion to what was paid, and is due within 5 working days (art. 7-8). Working days take the official Bulgarian holidays into account.",
+    "markPaid": "Received",
+    "markPaidHint": "Record the rest of this order's commission as received today"
   },
   "notifications": {
     "title": "Notifications",
     "markAll": "Mark all as read",
     "types": {
-      "order_created": { "title": "New order #{number}", "body": "{merchant} → {producer}, {net} excl. VAT (by {by})" },
-      "order_confirmed": { "title": "Order #{number} confirmed", "body": "{producer}, planned delivery {planned}" },
-      "order_delivered": { "title": "Order #{number} delivered", "body": "{producer} → {merchant}, {delivered}" },
-      "order_cancelled": { "title": "Order #{number} cancelled", "body": "{merchant} → {producer} {reason}" },
-      "order_changed": { "title": "Order #{number} changed", "body": "New value excl. VAT: {net}" },
-      "payment_recorded": { "title": "Payment on order #{number}", "body": "{merchant} paid {amount} on {paidOn}. The commission is due by {commissionDueOn}." },
-      "commission_received": { "title": "Commission received for #{number}", "body": "{amount} on {paidOn}" },
-      "request_created": { "title": "Price request #{number}", "body": "{good}: {producer} → {merchant}, now {current}, proposed {proposed}. {description}" },
-      "request_resolved": { "title": "Request #{number}: {decision, select, approved {approved} other {rejected}}", "body": "{good} {decision, select, approved {- new price {price}} other {}} {response}" },
-      "reminder": { "title": "Reminder: order by {due}", "body": "{hasProducer, select, yes {For {producer}.} other {}} {message}" },
-      "contract_notice": { "title": "The contract with {producer} renews on {end}", "body": "Written notice of non-renewal by {notice}." }
+      "order_created": {
+        "title": "New order #{number}",
+        "body": "{merchant} → {producer}, {net} excl. VAT (by {by})"
+      },
+      "order_confirmed": {
+        "title": "Order #{number} confirmed",
+        "body": "{producer}, planned delivery {planned}"
+      },
+      "order_delivered": {
+        "title": "Order #{number} delivered",
+        "body": "{producer} → {merchant}, {delivered}"
+      },
+      "order_cancelled": {
+        "title": "Order #{number} cancelled",
+        "body": "{merchant} → {producer} {reason}"
+      },
+      "order_changed": {
+        "title": "Order #{number} changed",
+        "body": "New value excl. VAT: {net}"
+      },
+      "payment_recorded": {
+        "title": "Payment on order #{number}",
+        "body": "{merchant} paid {amount} on {paidOn}."
+      },
+      "commission_received": {
+        "title": "Commission received for #{number}",
+        "body": "{amount} on {paidOn}"
+      },
+      "request_created": {
+        "title": "Price request #{number}",
+        "body": "{good}: {kind, select, list {{producer} asks for a new price of the good} other {{producer} → {merchant}}}, now {current}, proposed {proposed}. {description}"
+      },
+      "request_resolved": {
+        "title": "Request #{number}: {decision, select, approved {approved} other {rejected}}",
+        "body": "{good} {decision, select, approved {- new price {price}} other {}} {response}"
+      },
+      "reminder": {
+        "title": "Reminder: order by {due}",
+        "body": "{hasProducer, select, yes {For {producer}.} other {}} {message}"
+      },
+      "contract_notice": {
+        "title": "The contract with {producer} renews on {end}",
+        "body": "Written notice of non-renewal by {notice}."
+      }
     }
   },
   "profile": {
@@ -642,6 +755,8 @@
     "wrong_password": "Wrong password.",
     "email_taken": "An account with this email already exists.",
     "eik_taken": "A record with this EIK already exists.",
-    "good_unavailable": "The good is not available."
+    "good_unavailable": "The good is not available.",
+    "alias_taken": "This alias is already used by another shop",
+    "price_locked": "The good has links with merchants: ask the admin for a new price"
   }
 }

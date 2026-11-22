@@ -13,7 +13,7 @@ function AdminList({ rows }: { rows: Merchant[] }) {
   const tc = useTranslations('common');
   const ti = useTranslations('invoiceMethods');
   const f = useFmt();
-  const list = useListFilter(rows, (m) => `${m.name} ${m.eik} ${m.email} ${m.address}`);
+  const list = useListFilter(rows, (m) => `${m.name} ${m.eik} ${m.email ?? ''} ${m.address}`);
   return (
     <>
       <In className="mb-4 max-w-sm" placeholder={tc('search')} value={list.q} onChange={(e) => list.setQ(e.target.value)} />

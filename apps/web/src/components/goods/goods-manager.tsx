@@ -7,12 +7,21 @@ import { api } from '@/lib/api-client';
 import type { Good, Producer } from '@/lib/types';
 import { ActiveBadge } from '../badges';
 import { Btn, Card, Check, ConfirmBtn, Empty, ErrorNote, In, InfoNote, Modal, OkNote, Sel, Table, td, tdNum, Txt, useAction, useData, useFmt, useListFilter } from '../kit';
+import { NewRequest } from '../requests/new-request';
 import { useMe } from '../session';
 
 function GoodEditor({ good, producerId, producers, onDone }: { good: Good | null; producerId?: string; producers?: Producer[]; onDone(): void }) {
   const t = useTranslations('goods');
   const tc = useTranslations('common');
   const tu = useTranslations('units');
+  const tm = useTranslations('commissionTerms');
+  const me = useMe();
+  const admin = me.role === 'admin';
+  // A producer cannot change the price of a good linked with merchants: it asks the admin instead.
+  const priceLocked = !admin && Boolean(good?.price_linked);
+  const [asking, setAsking] = useState(false);
+  const [asked, setAsked] = useState(false);
+  const f = useFmt();
   const action = useAction();
   const [pid, setPid] = useState(good?.producer_id ?? producerId ?? '');
   const [form, setForm] = useState({
@@ -24,14 +33,19 @@ function GoodEditor({ good, producerId, producers, onDone }: { good: Good | null
     vat_percent: good ? String(good.vat_bp / 100) : String((producers?.find((p) => p.id === pid)?.default_vat_bp ?? 2000) / 100),
     description: good?.description ?? '',
     active: good?.active ?? true,
+    commission_unit: good?.commission_unit_cents !== null && good?.commission_unit_cents !== undefined ? (good.commission_unit_cents / 100).toFixed(2) : '',
   });
   const set = (k: keyof typeof form, v: string | boolean) => setForm({ ...form, [k]: v });
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const r = await action.run(() => (good ? api(`/goods/${good.id}`, { method: 'PUT', body: form }) : api(`/goods${pid ? `?producer_id=${pid}` : ''}`, { method: 'POST', body: form })));
+    // Only the admin sends the good's commission; for a producer it stays as it is.
+    const { commission_unit: _commission, ...rest } = form;
+    const body = admin ? form : rest;
+    const r = await action.run(() => (good ? api(`/goods/${good.id}`, { method: 'PUT', body }) : api(`/goods${pid ? `?producer_id=${pid}` : ''}`, { method: 'POST', body })));
     if (r) onDone();
   };
   return (
+    <>
     <form onSubmit={submit} className="space-y-4">
       {producers && !good ? (
         <Sel label={t('producer')} value={pid} onChange={(e) => setPid(e.target.value)} required error={action.field('producer_id')}>
@@ -54,23 +68,64 @@ function GoodEditor({ good, producerId, producers, onDone }: { good: Good | null
             </option>
           ))}
         </Sel>
-        <In label={t('price')} inputMode="decimal" required value={form.price} onChange={(e) => set('price', e.target.value)} error={action.field('price')} hint={t('priceHint')} />
+        <In
+          label={t('price')}
+          inputMode="decimal"
+          required
+          value={form.price}
+          onChange={(e) => set('price', e.target.value)}
+          error={action.field('price')}
+          hint={priceLocked ? t('priceLockedHint') : t('priceHint')}
+          disabled={priceLocked}
+        />
         <In label={t('vat')} inputMode="decimal" value={form.vat_percent} onChange={(e) => set('vat_percent', e.target.value)} error={action.field('vat_percent')} />
+        {admin ? (
+          <In label={tm('goodUnitAmount')} inputMode="decimal" value={form.commission_unit} onChange={(e) => set('commission_unit', e.target.value)} error={action.field('commission_unit')} hint={tm('goodUnitHint')} />
+        ) : null}
       </div>
       <Txt label={t('description')} value={form.description} onChange={(e) => set('description', e.target.value)} />
       <Check label={t('activeLabel')} checked={form.active} onChange={(e) => set('active', e.target.checked)} />
       {good && good.merchants_count ? <InfoNote>{t('lockedNote', { count: good.merchants_count })}</InfoNote> : null}
+      {priceLocked && good ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-md border border-neutral-200 bg-neutral-50 p-3 text-[13px]">
+          <span className="flex-1">
+            {good.pending_price_cents !== null && good.pending_price_cents !== undefined ? t('pendingPrice', { price: f.money(good.pending_price_cents) }) : asked ? t('requestSent') : t('askPriceHint')}
+          </span>
+          {good.pending_price_cents === null || good.pending_price_cents === undefined ? (
+            asked ? null : (
+              <Btn size="sm" onClick={() => setAsking(true)}>
+                {t('askPrice')}
+              </Btn>
+            )
+          ) : null}
+        </div>
+      ) : null}
       <ErrorNote>{action.error}</ErrorNote>
       <Btn tone="primary" type="submit" busy={action.busy}>
         {good ? tc('save') : tc('create')}
       </Btn>
     </form>
+      {good ? (
+        <Modal title={t('askPrice')} open={asking} onClose={() => setAsking(false)}>
+          {asking ? (
+            <NewRequest
+              good={good}
+              onDone={() => {
+                setAsking(false);
+                setAsked(true);
+              }}
+            />
+          ) : null}
+        </Modal>
+      ) : null}
+    </>
   );
 }
 
 /** Goods of one producer (or of all, for the admin): add, change, delete. */
 export function GoodsManager({ producerId }: { producerId?: string }) {
   const t = useTranslations('goods');
+  const tm = useTranslations('commissionTerms');
   const tc = useTranslations('common');
   const f = useFmt();
   const me = useMe();
@@ -95,7 +150,7 @@ export function GoodsManager({ producerId }: { producerId?: string }) {
       {state.error ? (
         <ErrorNote>{state.error}</ErrorNote>
       ) : list.rows.length ? (
-        <Table head={[t('name'), ...(allProducers ? [t('producer')] : []), t('unit'), t('price'), t('vat'), t('merchants'), t('sold'), '', tc('actions')]}>
+        <Table head={[t('name'), ...(allProducers ? [t('producer')] : []), t('unit'), t('price'), t('vat'), t('priceGross'), tm('goodColumn'), t('merchants'), t('sold'), '', tc('actions')]}>
           {list.rows.map((g) => (
             <tr key={g.id}>
               <td className={td}>
@@ -107,6 +162,8 @@ export function GoodsManager({ producerId }: { producerId?: string }) {
               <td className={td}>{f.unit(g.unit)}</td>
               <td className={tdNum}>{f.money(g.price_cents)}</td>
               <td className={tdNum}>{f.pct(g.vat_bp)}</td>
+              <td className={tdNum}>{f.money(g.price_gross_cents)}</td>
+              <td className={tdNum}>{g.commission_unit_cents !== null && g.commission_unit_cents !== undefined ? `${f.money(g.commission_unit_cents)} / ${f.unit(g.unit)}` : <span className="text-neutral-500">{tm('fromProducer')}</span>}</td>
               <td className={tdNum}>{g.merchants_count ?? 0}</td>
               <td className={tdNum}>{f.qty(g.sold_milli ?? 0)}</td>
               <td className={td}>

@@ -35,6 +35,10 @@ export type PairStatus = (typeof PAIR_STATUSES)[number];
 export const REQUEST_STATUSES = ['pending', 'approved', 'rejected'] as const;
 export type RequestStatus = (typeof REQUEST_STATUSES)[number];
 
+/** percent: a share of the net value; per_unit: a fixed amount for each unit sold (per piece, kg, l...). */
+export const COMMISSION_TYPES = ['percent', 'per_unit'] as const;
+export type CommissionType = (typeof COMMISSION_TYPES)[number];
+
 export const PAYMENT_STATUSES = ['unpaid', 'partial', 'paid'] as const;
 export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
 

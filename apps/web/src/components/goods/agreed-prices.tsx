@@ -64,12 +64,14 @@ export function AgreedPrices({ producerId, merchantId }: { producerId?: string; 
   const [editing, setEditing] = useState<AgreedPrice | null>(null);
   const [sent, setSent] = useState(false);
   const admin = me.role === 'admin';
+  // The merchant sees only its agreed prices, not the producer's current (wanted) price.
+  const showWanted = me.role !== 'merchant';
 
   return (
     <Card title={t('title')}>
-      <p className="mb-3 text-[13px] text-neutral-500">{t('hint')}</p>
+      <p className="mb-3 text-[13px] text-neutral-500">{me.role === 'merchant' ? t('merchantHint') : t('hint')}</p>
       {state.data?.length ? (
-        <Table head={[...(merchantId ? [] : [t('merchant')]), ...(producerId ? [] : [t('producer')]), t('good'), t('price'), t('listPrice'), t('quantity'), t('lastOrder'), '']}>
+        <Table head={[...(merchantId ? [] : [t('merchant')]), ...(producerId ? [] : [t('producer')]), t('good'), t('price'), t('priceGross'), ...(showWanted ? [t('listPrice'), t('listPriceGross')] : []), t('quantity'), t('lastOrder'), '']}>
           {state.data.map((r) => (
             <tr key={r.id}>
               {merchantId ? null : <td className={td}>{r.merchant_name}</td>}
@@ -78,7 +80,13 @@ export function AgreedPrices({ producerId, merchantId }: { producerId?: string; 
               <td className={`${tdNum} font-medium`}>
                 {f.money(r.price_cents)} / {f.unit(r.unit)}
               </td>
-              <td className={`${tdNum} text-neutral-500`}>{f.money(r.list_price_cents)}</td>
+              <td className={tdNum}>{f.money(r.price_gross_cents)}</td>
+              {showWanted ? (
+                <>
+                  <td className={`${tdNum} text-neutral-500`}>{f.money(r.list_price_cents)}</td>
+                  <td className={`${tdNum} text-neutral-500`}>{f.money(r.list_price_gross_cents)}</td>
+                </>
+              ) : null}
               <td className={tdNum}>{f.qty(r.quantity_milli, r.unit)}</td>
               <td className={`${td} whitespace-nowrap`}>{f.date(r.last_order_on)}</td>
               <td className={`${td} text-right`}>

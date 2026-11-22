@@ -44,6 +44,7 @@ export default function NotificationsPage() {
       planned: f.date(d.planned as string),
       delivered: f.date(d.delivered as string),
       hasProducer: d.producer ? 'yes' : 'no',
+      kind: String(d.kind ?? 'agreed'),
     };
   };
 

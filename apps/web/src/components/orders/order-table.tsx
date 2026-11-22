@@ -39,7 +39,12 @@ export function OrderTable({ rows, compact }: { rows: OrderListRow[]; compact?: 
           </td>
           <td className={`${td} whitespace-nowrap`}>{f.date(o.order_date)}</td>
           {showProducer ? <td className={td}>{o.producer_name}</td> : null}
-          {showMerchant ? <td className={td}>{o.merchant_name}</td> : null}
+          {showMerchant ? (
+            <td className={td}>
+              {o.merchant_name}
+              {o.shop_aliases ? <div className="text-[12px] text-neutral-500">{o.shop_aliases}</div> : null}
+            </td>
+          ) : null}
           <td className={tdNum}>{f.money(o.calc.baseNetCents)}</td>
           {compact ? null : <td className={tdNum}>{f.money(o.calc.payableGrossCents)}</td>}
           <td className={td}>
@@ -52,7 +57,7 @@ export function OrderTable({ rows, compact }: { rows: OrderListRow[]; compact?: 
             <td className={td}>
               <div className="flex flex-col items-start gap-0.5">
                 <span className="tabular-nums">
-                  {f.money(o.calc.commissionCents)} <span className="text-[12px] text-neutral-500">({f.pct(o.calc.commissionBp)})</span>
+                  {f.money(o.calc.commissionCents)} <span className="text-[12px] text-neutral-500">({f.commission(o.calc.commissionType, o.calc.commissionBp, o.calc.commissionUnitCents, o.calc.commissionByGoods)})</span>
                 </span>
                 <CommissionBadge status={o.calc.commissionStatus} />
               </div>

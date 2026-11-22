@@ -5,7 +5,6 @@ import {
   orderAdminEditSchema,
   orderCreateSchema,
   orderDeliverySchema,
-  orderInvoiceSchema,
   orderListQuerySchema,
   orderReturnSchema,
   orderStatusSchema,
@@ -20,6 +19,7 @@ import {
   REQUEST_STATUSES,
   resolveRequestSchema,
   settingsInputSchema,
+  shopInputSchema,
   userCreateSchema,
   uuidSchema,
 } from '@ba/shared';
@@ -112,6 +112,22 @@ const apiRoutes: FastifyPluginAsync = async (app) => {
     requireAdmin(req);
     return s.parties.pairs(actor(req), { merchantId: id(req) });
   });
+  app.get('/merchants/:id/shops', async (req) => s.parties.shops(actor(req), id(req)));
+  app.post('/merchants/:id/shops', async (req) => {
+    requireAdmin(req);
+    return s.parties.saveShop(id(req), null, parse(shopInputSchema, req.body));
+  });
+  app.put('/merchants/:id/shops/:sub', async (req) => {
+    requireAdmin(req);
+    const p = parse(subParam, req.params);
+    return s.parties.saveShop(p.id, p.sub, parse(shopInputSchema, req.body));
+  });
+  app.delete('/merchants/:id/shops/:sub', async (req) => {
+    requireAdmin(req);
+    const p = parse(subParam, req.params);
+    await s.parties.deleteShop(p.id, p.sub);
+    return ok;
+  });
 
   // ─── Own profile ───
   app.get('/profile', async (req) => {
@@ -175,6 +191,8 @@ const apiRoutes: FastifyPluginAsync = async (app) => {
 
   // ─── Orders ───
   app.get('/orders', async (req) => s.orders.list(actor(req), parse(orderListQuerySchema, req.query)));
+  // The extended view: one row for each good of the orders the list shows.
+  app.get('/orders/lines', async (req) => s.orders.lines(actor(req), parse(orderListQuerySchema, req.query)));
   app.post('/orders', async (req) => s.orders.create(actor(req), parse(orderCreateSchema, req.body)));
   app.get('/orders/:id', async (req) => s.orders.get(actor(req), id(req)));
   app.put('/orders/:id', async (req) => s.orders.adminEdit(actor(req), id(req), parse(orderAdminEditSchema, req.body)));
@@ -184,7 +202,6 @@ const apiRoutes: FastifyPluginAsync = async (app) => {
   });
   app.patch('/orders/:id/status', async (req) => s.orders.setStatus(actor(req), id(req), parse(orderStatusSchema, req.body)));
   app.put('/orders/:id/delivery', async (req) => s.orders.updateDelivery(actor(req), id(req), parse(orderDeliverySchema, req.body)));
-  app.put('/orders/:id/invoice', async (req) => s.orders.updateInvoice(actor(req), id(req), parse(orderInvoiceSchema, req.body)));
   app.put('/orders/:id/return', async (req) => s.orders.updateReturn(actor(req), id(req), parse(orderReturnSchema, req.body)));
   app.post('/orders/:id/payments', async (req) => s.orders.addPayment(actor(req), id(req), parse(paymentInputSchema, req.body)));
   app.delete('/orders/:id/payments/:sub', async (req) => {

@@ -141,7 +141,6 @@ export class ReportService {
       producer_name: row.producer_name,
       merchant_id: row.merchant_id,
       merchant_name: row.merchant_name,
-      invoice_number: row.invoice_number,
       calc,
     }));
     const byProducer = new Map<string, { producer_id: string; producer_name: string; calcs: OrderCalc[] }>();
@@ -192,13 +191,18 @@ export class ReportService {
       last_order_on: string;
       last_price_cents: number;
       agreed_price_cents: number | null;
+      last_price_gross_cents: number;
+      agreed_price_gross_cents: number | null;
+      gross_cents: number;
     }>(
       this.deps.db,
       `SELECT o.merchant_id, m.name AS merchant_name, m.address AS merchant_address, oi.good_id, max(oi.name_bg) AS name_bg, max(oi.name_en) AS name_en, max(oi.unit) AS unit,
-              sum(oi.quantity_milli)::bigint AS quantity_milli, sum(round(oi.quantity_milli * oi.unit_price_cents / 1000.0))::bigint AS net_cents,
+              sum(oi.quantity_milli)::bigint AS quantity_milli, sum(oi.line_net_cents)::bigint AS net_cents, sum(oi.line_gross_cents)::bigint AS gross_cents,
               count(DISTINCT o.id)::int AS orders, max(o.order_date) AS last_order_on,
               (array_agg(oi.unit_price_cents ORDER BY o.order_date DESC, o.number DESC))[1] AS last_price_cents,
-              (SELECT ap.price_cents FROM agreed_prices ap WHERE ap.good_id = oi.good_id AND ap.merchant_id = o.merchant_id) AS agreed_price_cents
+              (array_agg(oi.unit_price_gross_cents ORDER BY o.order_date DESC, o.number DESC))[1] AS last_price_gross_cents,
+              (SELECT ap.price_cents FROM agreed_prices ap WHERE ap.good_id = oi.good_id AND ap.merchant_id = o.merchant_id) AS agreed_price_cents,
+              (SELECT ap.price_gross_cents FROM agreed_prices ap WHERE ap.good_id = oi.good_id AND ap.merchant_id = o.merchant_id) AS agreed_price_gross_cents
          FROM order_items oi JOIN orders o ON o.id = oi.order_id JOIN merchants m ON m.id = o.merchant_id
         WHERE o.producer_id = $1 AND o.status <> 'cancelled'
         GROUP BY o.merchant_id, m.name, m.address, oi.good_id ORDER BY m.name, name_bg`,
@@ -206,10 +210,11 @@ export class ReportService {
     );
     const pairs = await many<{ merchant_id: string; status: string; active_period_days: number }>(this.deps.db, 'SELECT merchant_id, status, active_period_days FROM producer_merchants WHERE producer_id = $1', [pid]);
     const pairBy = new Map(pairs.map((p) => [p.merchant_id, p]));
-    const merchants = new Map<string, { merchant_id: string; merchant_name: string; merchant_address: string; net_cents: number; last_order_on: string; lines: typeof lines }>();
+    const merchants = new Map<string, { merchant_id: string; merchant_name: string; merchant_address: string; net_cents: number; gross_cents: number; last_order_on: string; lines: typeof lines }>();
     for (const l of lines) {
-      const m = merchants.get(l.merchant_id) ?? { merchant_id: l.merchant_id, merchant_name: l.merchant_name, merchant_address: l.merchant_address, net_cents: 0, last_order_on: l.last_order_on, lines: [] };
+      const m = merchants.get(l.merchant_id) ?? { merchant_id: l.merchant_id, merchant_name: l.merchant_name, merchant_address: l.merchant_address, net_cents: 0, gross_cents: 0, last_order_on: l.last_order_on, lines: [] };
       m.net_cents += l.net_cents;
+      m.gross_cents += l.gross_cents;
       if (l.last_order_on > m.last_order_on) m.last_order_on = l.last_order_on;
       m.lines.push(l);
       merchants.set(l.merchant_id, m);
