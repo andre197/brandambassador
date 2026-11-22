@@ -30,9 +30,9 @@ npm run seed:demo             # optional demo data (remove it with: npm run seed
 Then run each of these in its own terminal:
 
 ```bash
-npm run dev:api               # http://localhost:4300
+npm run dev:api               # http://localhost:4500
 npm run dev:worker            # emails (printed to the terminal while EMAIL_PROVIDER=console), reminders, contract notices
-npm run dev:web               # http://localhost:3300
+npm run dev:web               # http://localhost:3500
 ```
 
 Logins: **admin / admin** (created automatically in development only). After `seed:demo` there are also `producer@demo.bg` and `merchant@demo.bg` with the password `demo-password`.
@@ -69,4 +69,4 @@ Logins: **admin / admin** (created automatically in development only). After `se
 
 **Shared hosting (cPanel):** build on your computer with `npm run build && npm run bundle:cpanel` and upload `deploy/brandambassador-cpanel.tar.gz`. Step by step: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-**A VPS:** set real environment variables (see `.env.example`: `SITE_URL` with https, `IP_HASH_SECRET`, SMTP, `ADMIN_LOGIN`/`ADMIN_PASSWORD` or `create-admin`). Then run `npm ci && npm run build && npm run migrate:prod` and start the three processes behind a reverse proxy. The proxy sends `/api/*` to port 4300 and everything else to 3300. If you use cron instead of the worker, run `node apps/api/dist/src/cli/run-jobs.js` every minute.
+**A VPS:** set real environment variables (see `.env.example`: `SITE_URL` with https, `IP_HASH_SECRET`, SMTP, `ADMIN_LOGIN`/`ADMIN_PASSWORD` or `create-admin`). Then run `npm ci && npm run build && npm run migrate:prod` and start the three processes behind a reverse proxy. The proxy sends `/api/*` to port 4500 and everything else to 3500. If you use cron instead of the worker, run `node apps/api/dist/src/cli/run-jobs.js` every minute.

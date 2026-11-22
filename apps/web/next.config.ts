@@ -8,7 +8,7 @@ const rootEnv = path.resolve(process.cwd(), '../../.env');
 if (existsSync(rootEnv)) process.loadEnvFile(rootEnv);
 
 const withNextIntl = createNextIntlPlugin('./src/i18n/request.ts');
-const apiUrl = process.env.INTERNAL_API_URL ?? 'http://localhost:4300';
+const apiUrl = process.env.INTERNAL_API_URL ?? 'http://localhost:4500';
 
 const securityHeaders = [
   { key: 'X-Content-Type-Options', value: 'nosniff' },

@@ -24,7 +24,7 @@ const envSchema = z
       .transform((v) => (v ? v.split(',').map((s) => s.trim().replace(/\/+$/, '')).filter(Boolean) : [])),
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
     API_HOST: z.string().default('0.0.0.0'),
-    API_PORT: z.coerce.number().int().default(4300),
+    API_PORT: z.coerce.number().int().default(4500),
     TRUST_PROXY: bool(false),
 
     DATABASE_URL: z.string().min(1),

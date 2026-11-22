@@ -6,7 +6,7 @@ import { createDeps, type Deps } from '../src/deps.js';
 import { MemoryEmailProvider } from '../src/integrations/email/provider.js';
 import { createServices, type Services } from '../src/services/index.js';
 
-export const ORIGIN = 'http://localhost:3300';
+export const ORIGIN = 'http://localhost:3500';
 
 export interface TestCtx {
   app: FastifyInstance;

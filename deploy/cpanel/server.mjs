@@ -166,4 +166,4 @@ try {
 }
 
 // Under cPanel/Passenger the port is ignored (their socket is used); standalone it is a real port.
-main.listen(Number(process.env.PORT ?? 3300), process.env.WEB_HOST ?? '127.0.0.1');
+main.listen(Number(process.env.PORT ?? 3500), process.env.WEB_HOST ?? '127.0.0.1');
