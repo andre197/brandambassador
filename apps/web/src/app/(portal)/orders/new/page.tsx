@@ -60,6 +60,10 @@ function NewOrder() {
   const hasShops = shops.length > 0;
   const agreed = useData<AgreedPrice[]>(me.role !== 'merchant' && producerId && merchantId ? `/agreed-prices?producer_id=${producerId}&merchant_id=${merchantId}` : null);
 
+  // A merchant charged 0% VAT gets VAT 0 on every line (for a merchant the API already sends VAT 0).
+  const zeroVat = me.role !== 'merchant' && Boolean(merchants.data?.find((m) => m.id === merchantId)?.zero_vat);
+  const vatOf = (g: Good) => (zeroVat ? 0 : g.vat_bp);
+
   const available = (goods.data ?? []).filter((g) => g.active || admin);
   const goodOf = (id: string) => available.find((g) => g.id === id);
 
@@ -76,7 +80,7 @@ function NewOrder() {
   };
 
   /** A row's totals: price incl. VAT per unit x quantity, then the total excl. VAT out of it (as the saved order). */
-  const amounts = (r: Row, g: Good, q: number) => lineAmounts(qtyToMilli(q), priceOf(r, g), g.vat_bp);
+  const amounts = (r: Row, g: Good, q: number) => lineAmounts(qtyToMilli(q), priceOf(r, g), vatOf(g));
 
   // A merchant without shops has a single box with no shop, there from the start.
   const shown: Box[] = hasShops || !merchantId || shopsState.loading ? boxes : boxes.length ? boxes.slice(0, 1) : [{ key: 0, shopId: '', rows: [{ key: 0, goodId: '', qty: '', price: '' }] }];
@@ -104,8 +108,15 @@ function NewOrder() {
       return g && Number.isFinite(q) && q > 0 && (!hasShops || b.shopId) ? [{ box: b, r, g, q }] : [];
     }),
   );
+  /** Quantities added up per unit (pieces and kilograms are never added together), e.g. "300 бр. + 5 кг". */
+  const qtyText = (items: { g: Good; q: number }[]) => {
+    const by = new Map<string, number>();
+    for (const { g, q } of items) by.set(g.unit, (by.get(g.unit) ?? 0) + qtyToMilli(q));
+    return [...by].map(([unit, milli]) => f.qty(milli, unit)).join(' + ');
+  };
+
   const calc = calculateOrder({
-    lines: lines.map((l) => ({ quantityMilli: qtyToMilli(l.q), unitPriceCents: priceOf(l.r, l.g), vatBp: l.g.vat_bp })),
+    lines: lines.map((l) => ({ quantityMilli: qtyToMilli(l.q), unitPriceCents: priceOf(l.r, l.g), vatBp: vatOf(l.g) })),
     commissionBp: 0,
     payments: [],
     commissionPayments: [],
@@ -176,7 +187,7 @@ function NewOrder() {
           <p className="text-[13px] text-neutral-500">{t('chooseShopFirst')}</p>
         ) : (
           <>
-            <Table head={[t('good'), ...(showWanted ? [t('wantedPrice')] : []), t('unitPrice'), t('vat'), t('unitPriceGross'), t('quantity'), t('lineNet'), t('lineGross'), '']}>
+            <Table head={[t('good'), ...(showWanted ? [t('wantedPrice')] : []), t('unitNet'), t('vat'), t('unitGross'), t('quantity'), t('totalNet'), t('totalGross'), '']}>
               {box.rows.map((r) => {
                 const g = goodOf(r.goodId);
                 const q = num(r.qty);
@@ -208,7 +219,7 @@ function NewOrder() {
                     ) : null}
                     {g && admin ? (
                       <td className={`${td} w-32`}>
-                        <In inputMode="decimal" value={r.price} onChange={(e) => setRow(box, r, { price: e.target.value })} aria-label={t('unitPrice')} hint={f.unit(g.unit)} />
+                        <In inputMode="decimal" value={r.price} onChange={(e) => setRow(box, r, { price: e.target.value })} aria-label={t('unitNet')} hint={f.unit(g.unit)} />
                       </td>
                     ) : (
                       <td className={tdNum}>
@@ -220,8 +231,8 @@ function NewOrder() {
                         ) : null}
                       </td>
                     )}
-                    <td className={tdNum}>{g ? f.pct(g.vat_bp) : ''}</td>
-                    <td className={tdNum}>{g ? f.money(unitGrossCents(priceOf(r, g), g.vat_bp)) : ''}</td>
+                    <td className={tdNum}>{g ? f.pct(vatOf(g)) : ''}</td>
+                    <td className={tdNum}>{g ? f.money(unitGrossCents(priceOf(r, g), vatOf(g))) : ''}</td>
                     <td className={`${td} w-28`}>
                       <In inputMode="decimal" value={r.qty} onChange={(e) => setRow(box, r, { qty: e.target.value })} aria-label={t('quantity')} placeholder="0" disabled={!g} />
                     </td>
@@ -240,7 +251,7 @@ function NewOrder() {
             </Table>
             {boxGross ? (
               <p className="mt-2 text-right text-[13px] text-neutral-600">
-                {t('net')}: {f.money(boxNet)} · {t('gross')}: <strong>{f.money(boxGross)}</strong>
+                {t('quantity')}: {qtyText(lines.filter((l) => l.box.key === box.key))} · {t('net')}: {f.money(boxNet)} · {t('gross')}: <strong>{f.money(boxGross)}</strong>
               </p>
             ) : null}
           </>
@@ -308,6 +319,11 @@ function NewOrder() {
                 <Facts items={[[t('producerContact'), [producer.phone, producer.email].filter(Boolean).join(' · ')]]} />
               </div>
             ) : null}
+            {zeroVat ? (
+              <div className="mt-4">
+                <InfoNote>{t('zeroVat')}</InfoNote>
+              </div>
+            ) : null}
           </Card>
 
           <Card title={t('goods')}>
@@ -345,6 +361,7 @@ function NewOrder() {
             <Facts
               items={[
                 [t('lines'), lines.length],
+                [t('quantity'), lines.length ? qtyText(lines) : '-'],
                 [t('net'), f.money(calc.netCents)],
                 [t('vatAmount'), f.money(calc.vatCents)],
                 [t('gross'), <strong key="g">{f.money(calc.grossCents)}</strong>],

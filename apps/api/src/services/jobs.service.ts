@@ -2,7 +2,7 @@ import { addDays, type Locale, sofiaToday } from '@ba/shared';
 import { many, one, withTx } from '../db/pool.js';
 import type { Deps } from '../deps.js';
 import { renderPasswordEmail } from '../integrations/email/templates.js';
-import { claimJobs, completeJob, failJob, type OutboxJob, releaseStaleJobs } from '../repositories/outbox.js';
+import { claimJobs, completeJob, failJob, type OutboxJob, releaseJobs, releaseStaleJobs } from '../repositories/outbox.js';
 import type { NotificationService } from './notification.service.js';
 import { contractTerm } from './party.service.js';
 import type { ReminderService } from './reminder.service.js';
@@ -43,10 +43,17 @@ export class JobsService {
     }
   }
 
-  /** Claims and runs up to `limit` due jobs; returns how many ran. */
-  async runOnce(limit = 20): Promise<number> {
+  /**
+   * Claims and runs up to `limit` due jobs; returns how many it claimed. With a `deadline` (epoch ms)
+   * it starts no job after that time and hands the unstarted ones back to the queue.
+   */
+  async runOnce(limit = 20, deadline?: number): Promise<number> {
     const jobs = await claimJobs(this.deps.db, limit);
-    for (const job of jobs) {
+    for (const [i, job] of jobs.entries()) {
+      if (deadline && Date.now() >= deadline) {
+        await releaseJobs(this.deps.db, jobs.slice(i).map((j) => j.id));
+        break;
+      }
       try {
         await this.handle(job);
         await completeJob(this.deps.db, job.id);

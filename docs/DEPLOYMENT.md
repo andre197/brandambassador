@@ -60,10 +60,12 @@ To set a new administrator password (or add another administrator), use the term
 **Cron Jobs** → add a job that runs **every minute** (`* * * * *`), with the paths of your account:
 
 ```
-flock -n /home/USER/brandambassador/.jobs.lock -c "cd /home/USER/brandambassador && timeout 150 /home/USER/nodevenv/brandambassador/24/bin/node apps/api/dist/src/cli/run-jobs.js >> /home/USER/brandambassador/jobs.log 2>&1"
+cd /home/USER/brandambassador && timeout -s KILL 70 /home/USER/nodevenv/brandambassador/24/bin/node apps/api/dist/src/cli/run-jobs.js >> /home/USER/brandambassador/jobs.log 2>&1
 ```
 
-Without it no emails are sent (new orders, price requests, invitations, password resets), and the "place an order by" reminders and contract renewal notices never go out. `flock -n` skips a minute while the previous run is still going, and `timeout 150` ends a run that hangs. If the host has no `flock`, the plain `cd ... && node ...` part works too.
+Without it no emails are sent (new orders, price requests, invitations, password resets), and the "place an order by" reminders and contract renewal notices never go out.
+
+A run never piles up on the next one: only one run works at a time (a second one exits at once), no new email starts after about 40 seconds, and the run ends itself after 55 seconds. Database and SMTP calls have timeouts, so a blocked SMTP port or a slow database makes a send fail and retry later instead of hanging. `timeout -s KILL 70` is a last safety net in case Node itself gets stuck. Check `jobs.log` for `job failed` lines: they name the reason (for example an SMTP connection timeout when the host blocks the port).
 
 ### 5. Updating
 

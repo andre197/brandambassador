@@ -18,3 +18,7 @@ contracts/
 !.env.cpanel.example
 deploy/cpanel-bundle/
 deploy/*.tar.gz
+
+# Business data files (spreadsheets, address lists)
+*.xlsx
+firmi-adresi.txt

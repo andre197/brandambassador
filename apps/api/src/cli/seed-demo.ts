@@ -66,6 +66,7 @@ try {
           invoice_email: `invoices@${eik}.example`,
           invoice_note: null,
           delivery_note: 'Приемане 8:00-11:00',
+          zero_vat: false,
         })
       ).id;
     const shop1 = await shop('Био Маркет Лозенец', DEMO_EIK.shop1, 'София, бул. Черни връх 50');
@@ -82,6 +83,7 @@ try {
       invoice_email: null,
       invoice_note: null,
       delivery_note: null,
+      zero_vat: false,
     });
     await s.parties.savePair(producerId, {
       merchant_id: shop2.id,

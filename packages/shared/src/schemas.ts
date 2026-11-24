@@ -156,6 +156,8 @@ export const merchantInputSchema = z.object({
   invoice_email: optionalEmail,
   invoice_note: optionalText(1000),
   delivery_note: optionalText(1000),
+  /** Charged 0% VAT: new orders get VAT 0 on every line. */
+  zero_vat: z.boolean().default(false),
 });
 export type MerchantInput = z.output<typeof merchantInputSchema>;
 

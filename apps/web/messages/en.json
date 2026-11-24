@@ -280,7 +280,13 @@
     "wantedPrice": "Wanted price",
     "wantedPriceHint": "The producer's current price of the good. For information only.",
     "markCommissionPaid": "Mark the commission as received ({amount})",
-    "markCommissionPaidHint": "Records the rest of the commission as received today. For a part payment, enter the amount below."
+    "markCommissionPaidHint": "Records the rest of the commission as received today. For a part payment, enter the amount below.",
+    "unitNet": "Unit price excl. VAT",
+    "unitGross": "Unit price incl. VAT",
+    "totalNet": "Total excl. VAT",
+    "totalGross": "Total incl. VAT",
+    "ordersCount": "Total ({count} orders)",
+    "zeroVat": "The merchant is charged 0% VAT"
   },
   "events": {
     "title": "History",
@@ -362,7 +368,9 @@
     "invoicing": "Invoices and receiving",
     "invoiceReceived": "How it receives invoices",
     "invoiceEmail": "Email for invoices",
-    "receivingNote": "Receiving goods (hours, ramp…)"
+    "receivingNote": "Receiving goods (hours, ramp…)",
+    "zeroVat": "Merchant charged 0% VAT",
+    "zeroVatHint": "This merchant's new orders get 0% VAT on every good. Orders already made do not change."
   },
   "users": {
     "title": "Platform access",

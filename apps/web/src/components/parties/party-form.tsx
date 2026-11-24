@@ -157,6 +157,7 @@ export function MerchantForm({ initial, onSaved }: { initial: Merchant | null; o
     invoice_email: str(initial?.invoice_email),
     invoice_note: str(initial?.invoice_note),
     delivery_note: str(initial?.delivery_note),
+    zero_vat: initial?.zero_vat ?? false,
   });
   const set = (k: string, v: string | boolean) => {
     setForm({ ...form, [k]: v });
@@ -187,6 +188,10 @@ export function MerchantForm({ initial, onSaved }: { initial: Merchant | null; o
           <In label={t('invoiceEmail')} type="email" value={str(form.invoice_email)} onChange={(e) => set('invoice_email', e.target.value)} error={action.field('invoice_email')} />
           <Txt label={t('invoiceNote')} value={str(form.invoice_note)} onChange={(e) => set('invoice_note', e.target.value)} />
           <Txt label={t('receivingNote')} value={str(form.delivery_note)} onChange={(e) => set('delivery_note', e.target.value)} />
+          <div className="sm:col-span-2">
+            <Check label={t('zeroVat')} checked={Boolean(form.zero_vat)} onChange={(e) => set('zero_vat', e.target.checked)} />
+            <p className="mt-1 text-[12px] text-neutral-500">{t('zeroVatHint')}</p>
+          </div>
         </div>
       </Card>
       <Card title={t('internal')}>

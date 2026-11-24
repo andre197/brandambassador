@@ -16,8 +16,18 @@ export interface Queryable {
   query<R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, values?: unknown[]): Promise<pg.QueryResult<R>>;
 }
 
-export function createPool(connectionString: string, max = 10): Pool {
-  return new pg.Pool({ connectionString, max, idleTimeoutMillis: 30_000 });
+/**
+ * `connectionTimeoutMillis`: a database that does not answer fails the call instead of waiting forever.
+ * `queryTimeoutMs` (short-lived scripts such as the cron job): also give up on a query that never returns.
+ */
+export function createPool(connectionString: string, max = 10, opts: { queryTimeoutMs?: number } = {}): Pool {
+  return new pg.Pool({
+    connectionString,
+    max,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 10_000,
+    ...(opts.queryTimeoutMs ? { query_timeout: opts.queryTimeoutMs, statement_timeout: opts.queryTimeoutMs } : {}),
+  });
 }
 
 /** Runs `fn` inside a transaction. Rolls back on any thrown error. */

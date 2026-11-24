@@ -30,7 +30,7 @@ const PRODUCER_COLS = `p.id, p.name, p.eik, p.phone, p.email, p.address, p.conta
   p.delivery_method, p.delivery_note, p.invoice_method, p.invoice_note, p.default_vat_bp`;
 const PRODUCER_ADMIN_COLS = `${PRODUCER_COLS}, p.notes, p.commission_type, p.commission_bp, p.commission_unit_cents, p.contract_number, p.contract_signed_on, p.created_at, p.updated_at`;
 const MERCHANT_COLS = `m.id, m.name, m.eik, m.phone, m.email, m.address, m.contact_person, m.active,
-  m.invoice_method, m.invoice_email, m.invoice_note, m.delivery_note`;
+  m.invoice_method, m.invoice_email, m.invoice_note, m.delivery_note, m.zero_vat`;
 const MERCHANT_ADMIN_COLS = `${MERCHANT_COLS}, m.notes, m.created_at, m.updated_at`;
 
 /** Order money per party, cancelled orders excluded. */
@@ -204,12 +204,12 @@ export class PartyService {
   async saveMerchant(id: string | null, input: MerchantInput) {
     const dup = await one(this.deps.db, 'SELECT 1 FROM merchants WHERE eik = $1 AND id IS DISTINCT FROM $2', [input.eik, id]);
     if (dup) throw new AppError('eik_taken', { fields: { eik: 'validation.eik_taken' } });
-    const values = [input.name, input.eik, input.phone, input.email, input.address, input.contact_person, input.notes, input.active, input.invoice_method, input.invoice_email, input.invoice_note, input.delivery_note];
+    const values = [input.name, input.eik, input.phone, input.email, input.address, input.contact_person, input.notes, input.active, input.invoice_method, input.invoice_email, input.invoice_note, input.delivery_note, input.zero_vat];
     if (id) {
       const r = await one<{ id: string }>(
         this.deps.db,
         `UPDATE merchants SET name=$1, eik=$2, phone=$3, email=$4, address=$5, contact_person=$6, notes=$7, active=$8, invoice_method=$9,
-                invoice_email=$10, invoice_note=$11, delivery_note=$12, updated_at=now() WHERE id=$13 RETURNING id`,
+                invoice_email=$10, invoice_note=$11, delivery_note=$12, zero_vat=$13, updated_at=now() WHERE id=$14 RETURNING id`,
         [...values, id],
       );
       if (!r) throw new AppError('not_found');
@@ -217,8 +217,8 @@ export class PartyService {
     }
     const r = await one<{ id: string }>(
       this.deps.db,
-      `INSERT INTO merchants (name, eik, phone, email, address, contact_person, notes, active, invoice_method, invoice_email, invoice_note, delivery_note)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+      `INSERT INTO merchants (name, eik, phone, email, address, contact_person, notes, active, invoice_method, invoice_email, invoice_note, delivery_note, zero_vat)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
       values,
     );
     return { id: r!.id };

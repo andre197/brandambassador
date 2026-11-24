@@ -26,6 +26,8 @@ export interface OrderListRow {
   merchant_eik?: string;
   /** The aliases of the shops in this order, comma separated; null without shops. */
   shop_aliases?: string | null;
+  /** The order's total quantity, per unit. */
+  quantities?: { unit: string; quantity_milli: number }[];
   planned_delivery_on: string | null;
   delivered_on: string | null;
   commission_type?: CommissionType;
@@ -114,7 +116,7 @@ export interface OrderDetail extends OrderListRow {
   events: OrderEvent[];
   requests: PriceRequest[];
   producer: { id: string; name: string; eik: string; phone: string; email: string | null; address: string; contact_person: string | null };
-  merchant: { id: string; name: string; eik: string; phone: string; email: string | null; address: string; contact_person: string | null; invoice_email: string | null; delivery_note: string | null };
+  merchant: { id: string; name: string; eik: string; phone: string; email: string | null; address: string; contact_person: string | null; invoice_email: string | null; delivery_note: string | null; zero_vat?: boolean };
 }
 
 export interface Good {
@@ -214,6 +216,8 @@ export interface Merchant {
   invoice_email: string | null;
   invoice_note: string | null;
   delivery_note: string | null;
+  /** Charged 0% VAT: new orders get VAT 0. */
+  zero_vat?: boolean;
   notes?: string | null;
   stats?: PartyStats;
   producers_count?: number;
@@ -307,6 +311,8 @@ export interface OrderLine {
   name_en: string | null;
   quantity_milli: number;
   unit: string;
+  unit_price_cents: number;
+  unit_price_gross_cents: number;
   line_net_cents: number;
   line_gross_cents: number;
 }

@@ -6,7 +6,7 @@ import { useLocale, useTranslations } from 'next-intl';
 import { useSearchParams } from 'next/navigation';
 import { Suspense, useState } from 'react';
 import { Btn, downloadCsv, Empty, ExportButtons, In, Loaded, PageHeader, printTable, Sel, Table, Tabs, td, tdNum, useData, useFmt } from '@/components/kit';
-import { OrderTable } from '@/components/orders/order-table';
+import { OrderTable, sumQuantities } from '@/components/orders/order-table';
 import { useMe } from '@/components/session';
 import type { Merchant, OrderLine, OrderListRow, Producer } from '@/lib/types';
 
@@ -23,7 +23,7 @@ function OrderLinesTable({ rows }: { rows: OrderLine[] }) {
   const net = rows.reduce((s, r) => s + Number(r.line_net_cents), 0);
   const gross = rows.reduce((s, r) => s + Number(r.line_gross_cents), 0);
   return (
-    <Table head={[t('eik'), t('merchant'), t('shopAlias'), t('address'), t('good'), t('quantity'), t('amountNet'), t('amountGross')]}>
+    <Table head={[t('eik'), t('merchant'), t('shopAlias'), t('address'), t('good'), t('quantity'), t('unitNet'), t('unitGross'), t('totalNet'), t('totalGross')]}>
       {rows.map((r) => (
         <tr key={r.id} className="hover:bg-neutral-50">
           <td className={`${td} whitespace-nowrap`}>{r.merchant_eik}</td>
@@ -39,12 +39,14 @@ function OrderLinesTable({ rows }: { rows: OrderLine[] }) {
           <td className={td}>{r.address}</td>
           <td className={td}>{locale === 'en' && r.name_en ? r.name_en : r.name_bg}</td>
           <td className={`${tdNum} whitespace-nowrap`}>{f.qty(r.quantity_milli, r.unit)}</td>
+          <td className={tdNum}>{f.money(r.unit_price_cents)}</td>
+          <td className={tdNum}>{f.money(r.unit_price_gross_cents)}</td>
           <td className={tdNum}>{f.money(r.line_net_cents)}</td>
           <td className={tdNum}>{f.money(r.line_gross_cents)}</td>
         </tr>
       ))}
       <tr className="bg-neutral-50 font-semibold">
-        <td className={td} colSpan={6}>
+        <td className={td} colSpan={8}>
           {t('total')}
         </td>
         <td className={tdNum}>{f.money(net)}</td>
@@ -96,30 +98,54 @@ function OrdersList() {
     .filter(Boolean)
     .join(' · ');
 
+  const qtyText = (list: OrderListRow['quantities']) => (list ?? []).map((q) => f.qty(q.quantity_milli, q.unit)).join(' + ');
   // The same columns as the orders table.
   const showProducer = me.role !== 'producer';
   const showMerchant = me.role !== 'merchant';
   const showCommission = me.role !== 'merchant';
   const ordersTable = (rows: OrderListRow[]) => {
-    const head = [t('number'), t('date'), ...(showProducer ? [t('producer')] : []), ...(showMerchant ? [t('merchant')] : []), t('net'), t('gross'), t('status'), t('payment'), ...(showCommission ? [t('commission')] : [])];
+    const head = [t('number'), t('date'), ...(showProducer ? [t('producer')] : []), ...(showMerchant ? [t('merchant')] : []), t('quantity'), t('net'), t('gross'), t('status'), t('payment'), ...(showCommission ? [t('commission')] : [])];
     const body = rows.map((o) => [
       o.number,
       f.date(o.order_date),
       ...(showProducer ? [o.producer_name] : []),
       ...(showMerchant ? [o.merchant_name] : []),
+      qtyText(o.quantities),
       f.money(o.calc.baseNetCents),
       f.money(o.calc.payableGrossCents),
       ts(o.status),
       tps(o.calc.paymentStatus),
       ...(showCommission ? [`${f.money(o.calc.commissionCents)} (${f.commission(o.calc.commissionType, o.calc.commissionBp, o.calc.commissionUnitCents, o.calc.commissionByGoods)})`] : []),
     ]);
-    const firstMoney = 2 + (showProducer ? 1 : 0) + (showMerchant ? 1 : 0);
-    return { head, body, numeric: [0, firstMoney, firstMoney + 1, ...(showCommission ? [head.length - 1] : [])] };
+    const qtyCol = 2 + (showProducer ? 1 : 0) + (showMerchant ? 1 : 0);
+    // The last row: the number of orders and the sums.
+    const footer = [
+      t('ordersCount', { count: rows.length }),
+      ...Array(qtyCol - 1).fill(''),
+      qtyText(sumQuantities(rows)),
+      f.money(rows.reduce((s, o) => s + Number(o.calc.baseNetCents), 0)),
+      f.money(rows.reduce((s, o) => s + Number(o.calc.payableGrossCents), 0)),
+      '',
+      '',
+      ...(showCommission ? [f.money(rows.reduce((s, o) => s + Number(o.calc.commissionCents ?? 0), 0))] : []),
+    ];
+    return { head, body, footer, qtyCol, numeric: [0, qtyCol, qtyCol + 1, qtyCol + 2, ...(showCommission ? [head.length - 1] : [])] };
   };
   const linesTable = (rows: OrderLine[]) => ({
-    head: [t('eik'), t('merchant'), t('shopAlias'), t('address'), t('good'), t('quantity'), t('amountNet'), t('amountGross')],
-    body: rows.map((r) => [r.merchant_eik, r.merchant_name, r.shop_alias ?? '', r.address, locale === 'en' && r.name_en ? r.name_en : r.name_bg, f.qty(r.quantity_milli, r.unit), f.money(r.line_net_cents), f.money(r.line_gross_cents)]),
-    numeric: [5, 6, 7],
+    head: [t('eik'), t('merchant'), t('shopAlias'), t('address'), t('good'), t('quantity'), t('unitNet'), t('unitGross'), t('totalNet'), t('totalGross')],
+    body: rows.map((r) => [
+      r.merchant_eik,
+      r.merchant_name,
+      r.shop_alias ?? '',
+      r.address,
+      locale === 'en' && r.name_en ? r.name_en : r.name_bg,
+      f.qty(r.quantity_milli, r.unit),
+      f.money(r.unit_price_cents),
+      f.money(r.unit_price_gross_cents),
+      f.money(r.line_net_cents),
+      f.money(r.line_gross_cents),
+    ]),
+    numeric: [5, 6, 7, 8, 9],
     total: [rows.reduce((s, r) => s + Number(r.line_net_cents), 0), rows.reduce((s, r) => s + Number(r.line_gross_cents), 0)],
   });
 
@@ -128,7 +154,7 @@ function OrdersList() {
   const exportOrders = (kind: 'csv' | 'pdf') => {
     const rows = state.data ?? [];
     const x = ordersTable(rows);
-    if (kind === 'pdf') return void printTable(t('title'), x.head, x.body, { subtitle, numeric: x.numeric });
+    if (kind === 'pdf') return void printTable(t('title'), x.head, x.body, { subtitle, numeric: x.numeric, footer: x.footer });
     downloadCsv(`orders-${today()}.csv`, [
       x.head,
       ...rows.map((o) => [
@@ -136,19 +162,33 @@ function OrdersList() {
         o.order_date,
         ...(showProducer ? [o.producer_name] : []),
         ...(showMerchant ? [o.merchant_name] : []),
+        qtyText(o.quantities),
         eur(o.calc.baseNetCents),
         eur(o.calc.payableGrossCents),
         ts(o.status),
         tps(o.calc.paymentStatus),
         ...(showCommission ? [eur(o.calc.commissionCents)] : []),
       ]),
+      [
+        x.footer[0]!,
+        ...Array(x.qtyCol - 1).fill(''),
+        x.footer[x.qtyCol]!,
+        eur(rows.reduce((s, o) => s + Number(o.calc.baseNetCents), 0)),
+        eur(rows.reduce((s, o) => s + Number(o.calc.payableGrossCents), 0)),
+        '',
+        '',
+        ...(showCommission ? [eur(rows.reduce((s, o) => s + Number(o.calc.commissionCents ?? 0), 0))] : []),
+      ],
     ]);
   };
   const exportLines = (kind: 'csv' | 'pdf') => {
     const rows = lines.data ?? [];
     const x = linesTable(rows);
-    if (kind === 'pdf') return void printTable(`${t('title')} - ${t('views.lines')}`, x.head, x.body, { subtitle, numeric: x.numeric, footer: [t('total'), '', '', '', '', '', f.money(x.total[0]), f.money(x.total[1])] });
-    downloadCsv(`order-lines-${today()}.csv`, [x.head, ...rows.map((r, i) => [r.merchant_eik, r.merchant_name, r.shop_alias ?? '', r.address, x.body[i]![4], x.body[i]![5], eur(r.line_net_cents), eur(r.line_gross_cents)])]);
+    if (kind === 'pdf') return void printTable(`${t('title')} - ${t('views.lines')}`, x.head, x.body, { subtitle, numeric: x.numeric, footer: [t('total'), '', '', '', '', '', '', '', f.money(x.total[0]), f.money(x.total[1])] });
+    downloadCsv(`order-lines-${today()}.csv`, [
+      x.head,
+      ...rows.map((r, i) => [r.merchant_eik, r.merchant_name, r.shop_alias ?? '', r.address, x.body[i]![4], x.body[i]![5], eur(r.unit_price_cents), eur(r.unit_price_gross_cents), eur(r.line_net_cents), eur(r.line_gross_cents)]),
+    ]);
   };
 
   const exportButtons =
@@ -214,7 +254,7 @@ function OrdersList() {
       {view === 'lines' && canExtend ? (
         <Loaded state={lines}>{(rows) => <OrderLinesTable rows={rows} />}</Loaded>
       ) : (
-        <Loaded state={state}>{(rows) => <OrderTable rows={rows} />}</Loaded>
+        <Loaded state={state}>{(rows) => <OrderTable rows={rows} totals />}</Loaded>
       )}
     </>
   );

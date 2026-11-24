@@ -52,6 +52,12 @@ export async function failJob(db: Queryable, job: OutboxJob, error: string, retr
   );
 }
 
+/** Hands claimed jobs that were never started back to the queue, without counting the attempt. */
+export async function releaseJobs(db: Queryable, ids: number[]): Promise<void> {
+  if (!ids.length) return;
+  await db.query(`UPDATE outbox_jobs SET status = 'pending', locked_at = NULL, attempts = greatest(attempts - 1, 0) WHERE id = ANY($1::bigint[]) AND status = 'processing'`, [ids]);
+}
+
 /** Returns jobs stuck in `processing` (e.g. a crashed worker) to `pending`. */
 export async function releaseStaleJobs(db: Queryable, olderThanSeconds = 300): Promise<number> {
   const r = await db.query(

@@ -22,8 +22,13 @@ export class GoodsService {
     if (actor.role === 'merchant') {
       return many(
         this.deps.db,
-        `SELECT ${COLS}, coalesce(ap.price_cents, g.price_cents) AS my_price_cents, coalesce(ap.price_gross_cents, g.price_gross_cents) AS my_price_gross_cents, ap.id IS NOT NULL AS price_locked
+        // A merchant charged 0% VAT sees its prices without VAT: VAT 0, the price incl. VAT equal to the price.
+        `SELECT ${COLS.replace('g.price_gross_cents', 'CASE WHEN m.zero_vat THEN g.price_cents ELSE g.price_gross_cents END AS price_gross_cents').replace('g.vat_bp', 'CASE WHEN m.zero_vat THEN 0 ELSE g.vat_bp END AS vat_bp')},
+                coalesce(ap.price_cents, g.price_cents) AS my_price_cents,
+                CASE WHEN m.zero_vat THEN coalesce(ap.price_cents, g.price_cents) ELSE coalesce(ap.price_gross_cents, g.price_gross_cents) END AS my_price_gross_cents,
+                ap.id IS NOT NULL AS price_locked
            FROM goods g JOIN producers p ON p.id = g.producer_id AND p.active
+           JOIN merchants m ON m.id = $2
            LEFT JOIN agreed_prices ap ON ap.good_id = g.id AND ap.merchant_id = $2
           WHERE g.producer_id = $1 AND g.active AND NOT g.archived ORDER BY g.name_bg`,
         [producerId, actor.merchantId],
@@ -124,8 +129,10 @@ export class GoodsService {
     if (filter.merchantId) where.push(`ap.merchant_id = $${params.push(filter.merchantId)}`);
     return many(
       this.deps.db,
-      `SELECT ap.id, ap.good_id, ap.merchant_id, ap.price_cents, ap.price_gross_cents, ap.updated_at, g.name_bg, g.name_en, g.unit, g.price_cents AS list_price_cents, g.price_gross_cents AS list_price_gross_cents,
-              g.vat_bp, g.producer_id, p.name AS producer_name, m.name AS merchant_name,
+      // For a merchant charged 0% VAT the prices incl. VAT are the prices themselves (VAT 0).
+      `SELECT ap.id, ap.good_id, ap.merchant_id, ap.price_cents, CASE WHEN m.zero_vat THEN ap.price_cents ELSE ap.price_gross_cents END AS price_gross_cents, ap.updated_at,
+              g.name_bg, g.name_en, g.unit, g.price_cents AS list_price_cents, CASE WHEN m.zero_vat THEN g.price_cents ELSE g.price_gross_cents END AS list_price_gross_cents,
+              CASE WHEN m.zero_vat THEN 0 ELSE g.vat_bp END AS vat_bp, m.zero_vat, g.producer_id, p.name AS producer_name, m.name AS merchant_name,
               (SELECT coalesce(sum(oi.quantity_milli), 0)::bigint FROM order_items oi JOIN orders o ON o.id = oi.order_id
                  WHERE oi.good_id = g.id AND o.merchant_id = ap.merchant_id AND o.status <> 'cancelled') AS quantity_milli,
               (SELECT max(o.order_date) FROM order_items oi JOIN orders o ON o.id = oi.order_id

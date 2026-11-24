@@ -12,11 +12,11 @@ export interface Deps {
   email: EmailProvider;
 }
 
-export function createDeps(config: Config, overrides: Partial<Deps> = {}): Deps {
+export function createDeps(config: Config, overrides: Partial<Deps> = {}, opts: { queryTimeoutMs?: number } = {}): Deps {
   const log = overrides.log ?? createLogger(config.LOG_LEVEL);
   return {
     config,
-    db: overrides.db ?? createPool(config.DATABASE_URL),
+    db: overrides.db ?? createPool(config.DATABASE_URL, 10, opts),
     log,
     now: overrides.now ?? (() => new Date()),
     email: overrides.email ?? createEmailProvider(config, log),
@@ -24,5 +24,10 @@ export function createDeps(config: Config, overrides: Partial<Deps> = {}): Deps 
 }
 
 export async function closeDeps(deps: Deps): Promise<void> {
+  try {
+    deps.email.close?.();
+  } catch {
+    // closing is best effort
+  }
   await deps.db.end().catch(() => undefined);
 }

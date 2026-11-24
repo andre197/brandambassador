@@ -53,7 +53,9 @@ export interface OrderRow {
 
 const ORDER_FROM = `FROM orders o JOIN producers p ON p.id = o.producer_id JOIN merchants m ON m.id = o.merchant_id`;
 const ORDER_SELECT = `SELECT o.*, p.name AS producer_name, m.name AS merchant_name, m.eik AS merchant_eik,
-  (SELECT string_agg(DISTINCT oi.shop_alias, ', ') FROM order_items oi WHERE oi.order_id = o.id) AS shop_aliases
+  (SELECT string_agg(DISTINCT oi.shop_alias, ', ') FROM order_items oi WHERE oi.order_id = o.id) AS shop_aliases,
+  (SELECT coalesce(json_agg(json_build_object('unit', q.unit, 'quantity_milli', q.milli) ORDER BY q.unit), '[]')
+     FROM (SELECT oi.unit, sum(oi.quantity_milli)::bigint AS milli FROM order_items oi WHERE oi.order_id = o.id GROUP BY oi.unit) q) AS quantities
   ${ORDER_FROM}`;
 
 /** Who may move an order from one status to another. */
@@ -149,7 +151,7 @@ export class OrderService {
       this.deps.db,
       `SELECT oi.id, o.id AS order_id, o.number, o.order_date, o.status, p.name AS producer_name, m.eik AS merchant_eik, m.name AS merchant_name,
               oi.shop_alias, coalesce(oi.shop_address, m.address) AS address, oi.name_bg, oi.name_en, oi.quantity_milli, oi.unit,
-              oi.line_net_cents, oi.line_gross_cents
+              oi.unit_price_cents, oi.unit_price_gross_cents, oi.line_net_cents, oi.line_gross_cents
          FROM orders o JOIN producers p ON p.id = o.producer_id JOIN merchants m ON m.id = o.merchant_id JOIN order_items oi ON oi.order_id = o.id
         WHERE ${where.join(' AND ')} AND o.id IN (SELECT o.id ${ORDER_FROM} WHERE ${where.join(' AND ')} ORDER BY o.order_date DESC, o.number DESC LIMIT 500)
         ORDER BY o.order_date DESC, o.number DESC, oi.sort_order, oi.name_bg`,
@@ -211,7 +213,7 @@ export class OrderService {
         [id],
       ),
       one(this.deps.db, 'SELECT id, name, eik, phone, email, address, contact_person FROM producers WHERE id = $1', [o.producer_id]),
-      one(this.deps.db, 'SELECT id, name, eik, phone, email, address, contact_person, invoice_email, delivery_note FROM merchants WHERE id = $1', [o.merchant_id]),
+      one(this.deps.db, 'SELECT id, name, eik, phone, email, address, contact_person, invoice_email, delivery_note, zero_vat FROM merchants WHERE id = $1', [o.merchant_id]),
     ]);
     const calc = (await this.calcFor(this.deps.db, [o])).get(id)!;
     const base = { items, payments, requests, producer, merchant };
@@ -281,7 +283,7 @@ export class OrderService {
         'SELECT id, name, active, delivery_method, delivery_note FROM producers WHERE id = $1',
         [producerId],
       );
-      const merchant = await one<{ id: string; name: string; active: boolean }>(tx, 'SELECT id, name, active FROM merchants WHERE id = $1', [merchantId]);
+      const merchant = await one<{ id: string; name: string; active: boolean; zero_vat: boolean }>(tx, 'SELECT id, name, active, zero_vat FROM merchants WHERE id = $1', [merchantId]);
       if (!producer || !merchant || (actor.role !== 'admin' && (!producer.active || !merchant.active))) throw new AppError('not_found');
 
       const goodIds = [...new Set(input.items.map((i) => i.good_id))];
@@ -372,7 +374,8 @@ export class OrderService {
         await tx.query(
           `INSERT INTO order_items (order_id, good_id, name_bg, name_en, sku, unit, quantity_milli, unit_price_cents, vat_bp, sort_order, commission_unit_cents, shop_id, shop_alias, shop_address)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-          [order!.id, g.id, g.name_bg, g.name_en, g.sku, g.unit, it.quantity, priceOf(it), g.vat_bp, sort++, goodsOwn ? g.commission_unit_cents : null, shop?.id ?? null, shop?.alias ?? null, shop?.address ?? null],
+          // A merchant charged 0% VAT gets VAT 0 on every line.
+          [order!.id, g.id, g.name_bg, g.name_en, g.sku, g.unit, it.quantity, priceOf(it), merchant.zero_vat ? 0 : g.vat_bp, sort++, goodsOwn ? g.commission_unit_cents : null, shop?.id ?? null, shop?.alias ?? null, shop?.address ?? null],
         );
       }
       const calc = await this.recompute(tx, order!.id);

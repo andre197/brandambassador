@@ -110,6 +110,7 @@ function AdminMerchant({ m, reload }: { m: Merchant; reload(): void }) {
 function ProducerView({ m }: { m: Merchant }) {
   const t = useTranslations('merchants');
   const ti = useTranslations('invoiceMethods');
+  const tparty = useTranslations('parties');
   const me = useMe();
   const orders = useData<OrderListRow[]>(`/orders?merchant_id=${m.id}`);
   return (
@@ -142,6 +143,7 @@ function ProducerView({ m }: { m: Merchant }) {
               [t('invoices'), `${ti(m.invoice_method as never)}${m.invoice_email ? ` · ${m.invoice_email}` : ''}`],
               [t('invoiceNote'), m.invoice_note],
               [t('receiving'), m.delivery_note],
+              ...(m.zero_vat ? ([[tparty('zeroVat'), '0 %']] as [string, string][]) : []),
             ]}
           />
         </Card>

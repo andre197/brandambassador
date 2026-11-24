@@ -14,6 +14,8 @@ export interface EmailMessage {
 export interface EmailProvider {
   readonly name: string;
   send(msg: EmailMessage): Promise<void>;
+  /** Closes open connections, so a short-lived process can exit. */
+  close?(): void;
 }
 
 /** Development: prints emails to the log instead of sending them. */
@@ -50,11 +52,21 @@ export class SmtpEmailProvider implements EmailProvider {
       port: config.SMTP_PORT,
       secure: config.SMTP_SECURE,
       auth: smtpAuth(config),
+      // nodemailer's defaults wait up to 2 minutes to connect and 10 minutes on a silent socket. Shared
+      // hosts often block outgoing SMTP ports, so a send fails fast instead and is retried later.
+      connectionTimeout: 15_000,
+      greetingTimeout: 15_000,
+      socketTimeout: 30_000,
+      dnsTimeout: 10_000,
     });
   }
 
   async send(msg: EmailMessage): Promise<void> {
     await this.transport.sendMail({ from: this.from, to: msg.to, subject: msg.subject, html: msg.html, text: msg.text, headers: msg.headers });
+  }
+
+  close(): void {
+    this.transport.close();
   }
 }
 

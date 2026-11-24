@@ -133,6 +133,31 @@ describe('orders, locked prices and commission', () => {
     expect((await agreed()).price_gross_cents).toBe(400);
   });
 
+  it('a merchant charged 0% VAT gets VAT 0 on new orders; earlier orders keep theirs', async () => {
+    const before = await merchant('POST', '/orders', { producer_id: ids.producer, items: [{ good_id: ids.cheese, quantity: 2 }] });
+    expect((await admin('PUT', `/merchants/${ids.merchant}`, { ...merchantBody('Магазин 1', '100031672'), zero_vat: true })).status).toBe(200);
+    expect((await admin('GET', `/merchants/${ids.merchant}`)).body.zero_vat).toBe(true);
+
+    // The merchant sees its prices without VAT.
+    const cheese = (await merchant('GET', `/goods?producer_id=${ids.producer}`)).body.find((g: { id: string }) => g.id === ids.cheese);
+    expect(cheese.vat_bp).toBe(0);
+    expect(cheese.my_price_gross_cents).toBe(1000);
+
+    const after = await admin('POST', '/orders', { producer_id: ids.producer, merchant_id: ids.merchant, items: [{ good_id: ids.cheese, quantity: 3 }] });
+    const order = (await admin('GET', `/orders/${after.body.id}`)).body;
+    expect(order.items[0].vat_bp).toBe(0);
+    expect(order.items[0].unit_price_gross_cents).toBe(1000);
+    expect(order.calc.grossCents).toBe(3000);
+    expect(order.calc.netCents).toBe(3000);
+    expect((await admin('GET', `/orders/${before.body.id}`)).body.items[0].vat_bp).toBe(2000);
+
+    // The orders list has the total quantity per unit; the extended view has the unit prices.
+    const list = (await admin('GET', '/orders')).body.find((o: { id: string }) => o.id === after.body.id);
+    expect(list.quantities).toEqual([{ unit: 'kg', quantity_milli: 3000 }]);
+    const line = (await admin('GET', '/orders/lines')).body.find((l: { order_id: string }) => l.order_id === after.body.id);
+    expect([line.unit_price_cents, line.unit_price_gross_cents, line.line_net_cents, line.line_gross_cents]).toEqual([1000, 1000, 3000, 3000]);
+  });
+
   it('price change requests: merchant asks, admin approves, open orders follow', async () => {
     const o = await merchant('POST', '/orders', { producer_id: ids.producer, items: [{ good_id: ids.cheese, quantity: 10 }] });
     const r = await merchant('POST', '/requests', { good_id: ids.cheese, order_id: o.body.id, proposed_price: 9.5, description: 'Обемна отстъпка' });

@@ -120,6 +120,16 @@ interface EditRow {
   shop_id: string;
 }
 
+/** A field caption shown only on phones; wider screens have the column labels above the rows. */
+function Labeled({ label, className, children }: { label: string; className?: string; children: ReactNode }) {
+  return (
+    <div className={className}>
+      <span className="mb-1 block text-[12px] font-medium text-neutral-500 sm:hidden">{label}</span>
+      {children}
+    </div>
+  );
+}
+
 /** Admin only: change lines, quantities, prices, the commission and returns. */
 function AdminEdit({ order, onDone }: { order: OrderDetail; onDone: SetOrder }) {
   const t = useTranslations('orders');
@@ -157,6 +167,11 @@ function AdminEdit({ order, onDone }: { order: OrderDetail; onDone: SetOrder }) 
     commissionPayments: [],
     today: todayIso(),
   });
+  /** The good's unit, shown under the quantity. */
+  const unitOf = (goodId: string) => {
+    const unit = goods.data?.find((g) => g.id === goodId)?.unit ?? order.items.find((x) => x.good_id === goodId)?.unit;
+    return unit ? f.unit(unit) : undefined;
+  };
   const set = (i: number, patch: Partial<EditRow>) => setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
 
   const submit = async (e: FormEvent) => {
@@ -192,9 +207,21 @@ function AdminEdit({ order, onDone }: { order: OrderDetail; onDone: SetOrder }) 
       <Modal title={t('editLines')} open={open} onClose={() => setOpen(false)} wide>
         <form onSubmit={submit} className="space-y-4">
           <div className="space-y-2">
+            {/* Column labels (on a phone every field has its own label). */}
+            {rows.length ? (
+              <div className="hidden gap-2 px-2 text-[12px] font-medium text-neutral-500 sm:grid sm:grid-cols-[2fr_1fr_1fr_1fr_1fr_2rem]">
+                <span>{t('good')}</span>
+                <span>{t('quantity')}</span>
+                <span>{t('unitNet')}</span>
+                <span>{t('vat')}, %</span>
+                <span title={tm('lineUnitHint')}>{tm('lineUnitAmount')}</span>
+                <span />
+              </div>
+            ) : null}
             {rows.map((r, i) => (
-              <div key={r.id ?? `new-${i}`} className="grid grid-cols-2 gap-2 rounded-md border border-neutral-200 p-2 sm:grid-cols-[2fr_1fr_1fr_1fr_1fr_auto]">
-                <Sel className="col-span-2 sm:col-span-1" aria-label={t('good')} value={r.good_id} onChange={(e) => set(i, { good_id: e.target.value })} error={action.field(`items.${i}.good_id`)}>
+              <div key={r.id ?? `new-${i}`} className="grid grid-cols-2 items-start gap-2 rounded-md border border-neutral-200 p-2 sm:grid-cols-[2fr_1fr_1fr_1fr_1fr_2rem]">
+                <Labeled label={t('good')} className="col-span-2 sm:col-span-1">
+                <Sel aria-label={t('good')} value={r.good_id} onChange={(e) => set(i, { good_id: e.target.value })} error={action.field(`items.${i}.good_id`)}>
                   <option value="">{tc('choose')}</option>
                   {(goods.data ?? []).map((g) => (
                     <option key={g.id} value={g.id}>
@@ -203,6 +230,7 @@ function AdminEdit({ order, onDone }: { order: OrderDetail; onDone: SetOrder }) 
                   ))}
                   {r.good_id && !goods.data?.some((g) => g.id === r.good_id) ? <option value={r.good_id}>{order.items.find((x) => x.good_id === r.good_id)?.name_bg ?? '…'}</option> : null}
                 </Sel>
+                </Labeled>
                 {hasShops ? (
                   <Sel className="col-span-2 sm:col-span-6" aria-label={t('shop')} value={r.shop_id} onChange={(e) => set(i, { shop_id: e.target.value })} error={action.field(`items.${i}.shop_id`)}>
                     <option value="">{t('noShop')}</option>
@@ -214,9 +242,16 @@ function AdminEdit({ order, onDone }: { order: OrderDetail; onDone: SetOrder }) 
                     {r.shop_id && !shops.data?.some((x) => x.id === r.shop_id) ? <option value={r.shop_id}>{order.items.find((x) => x.shop_id === r.shop_id)?.shop_alias ?? '…'}</option> : null}
                   </Sel>
                 ) : null}
-                <In aria-label={t('quantity')} placeholder={t('quantity')} inputMode="decimal" value={r.quantity} onChange={(e) => set(i, { quantity: e.target.value })} error={action.field(`items.${i}.quantity`)} />
-                <In aria-label={t('unitPrice')} placeholder={t('unitPrice')} inputMode="decimal" value={r.unit_price} onChange={(e) => set(i, { unit_price: e.target.value })} error={action.field(`items.${i}.unit_price`)} />
-                <In aria-label={t('vat')} placeholder={t('vat')} inputMode="decimal" value={r.vat_percent} onChange={(e) => set(i, { vat_percent: e.target.value })} />
+                <Labeled label={t('quantity')}>
+                  <In aria-label={t('quantity')} inputMode="decimal" value={r.quantity} onChange={(e) => set(i, { quantity: e.target.value })} error={action.field(`items.${i}.quantity`)} hint={unitOf(r.good_id)} />
+                </Labeled>
+                <Labeled label={t('unitNet')}>
+                  <In aria-label={t('unitNet')} inputMode="decimal" value={r.unit_price} onChange={(e) => set(i, { unit_price: e.target.value })} error={action.field(`items.${i}.unit_price`)} />
+                </Labeled>
+                <Labeled label={`${t('vat')}, %`}>
+                  <In aria-label={`${t('vat')}, %`} inputMode="decimal" value={r.vat_percent} onChange={(e) => set(i, { vat_percent: e.target.value })} />
+                </Labeled>
+                <Labeled label={tm('lineUnitAmount')}>
                 <In
                   aria-label={tm('lineUnitAmount')}
                   title={tm('lineUnitHint')}
@@ -226,6 +261,7 @@ function AdminEdit({ order, onDone }: { order: OrderDetail; onDone: SetOrder }) 
                   onChange={(e) => set(i, { commission_unit: e.target.value })}
                   error={action.field(`items.${i}.commission_unit`)}
                 />
+                </Labeled>
                 <Btn size="sm" tone="ghost" onClick={() => setRows(rows.filter((_, j) => j !== i))} aria-label={tc('remove')}>
                   ✕
                 </Btn>
@@ -235,7 +271,7 @@ function AdminEdit({ order, onDone }: { order: OrderDetail; onDone: SetOrder }) 
               size="sm"
               onClick={() => {
                 const g = goods.data?.[0];
-                setRows([...rows, { good_id: g?.id ?? '', quantity: '1', unit_price: g ? eur(g.price_cents) : '0', vat_percent: g ? String(g.vat_bp / 100) : '20', commission_unit: g?.commission_unit_cents !== null && g?.commission_unit_cents !== undefined ? eur(g.commission_unit_cents) : '', shop_id: rows[rows.length - 1]?.shop_id ?? shops.data?.find((x) => x.active)?.id ?? '' }]);
+                setRows([...rows, { good_id: g?.id ?? '', quantity: '1', unit_price: g ? eur(g.price_cents) : '0', vat_percent: order.merchant.zero_vat ? '0' : g ? String(g.vat_bp / 100) : '20', commission_unit: g?.commission_unit_cents !== null && g?.commission_unit_cents !== undefined ? eur(g.commission_unit_cents) : '', shop_id: rows[rows.length - 1]?.shop_id ?? shops.data?.find((x) => x.active)?.id ?? '' }]);
               }}
             >
               + {t('addLine')}
@@ -322,7 +358,12 @@ function TotalsCard({ order }: { order: OrderDetail }) {
   const f = useFmt();
   const me = useMe();
   const c = order.calc;
+  // The total quantity, added up per unit (pieces and kilograms are never added together).
+  const byUnit = new Map<string, number>();
+  for (const i of order.items) byUnit.set(i.unit, (byUnit.get(i.unit) ?? 0) + Number(i.quantity_milli));
+  const quantity = [...byUnit].map(([unit, milli]) => f.qty(milli, unit)).join(' + ');
   const items: [ReactNode, ReactNode][] = [
+    [t('quantity'), quantity || '-'],
     [t('net'), f.money(c.netCents)],
     [t('vatAmount'), f.money(c.vatCents)],
     [t('gross'), f.money(c.grossCents)],
